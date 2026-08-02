@@ -131,12 +131,18 @@ def station_dvv(
     for label, vcfg in ensemble_configs(cfg).items():
         per_pair = {}
         for pair, d in data.items():
-            dvv, valid = run_pipeline(d["ccfs"], d["t"], d["fs"], vcfg, eps_max=eps)
-            # TODO(first smoke test): surface the stretching CC from
-            # run_pipeline (or call measure_stretching directly) so the
-            # Weaver sigma uses the real per-epoch coherence. Placeholder
-            # CC=0.8 on valid epochs until then.
-            cc = np.where(valid, 0.8, np.nan)
+            try:
+                dvv, valid, cc = run_pipeline(
+                    d["ccfs"], d["t"], d["fs"], vcfg, eps_max=eps, return_cc=True
+                )
+            except TypeError:
+                # codameter <= 0.3.0 without return_cc
+                # (Denolle-Lab/codameter#32): nominal CC on valid epochs
+                dvv, valid = run_pipeline(d["ccfs"], d["t"], d["fs"], vcfg, eps_max=eps)
+                cc = np.where(valid, 0.8, np.nan)
+            # non-stretching estimators / inversion reference return NaN CC;
+            # keep those epochs usable with the same nominal value
+            cc = np.where(np.isfinite(cc), cc, np.where(valid, 0.8, np.nan))
             sigma = np.array(
                 [
                     weaver_stretching_error(c, f_center, vcfg["window"][0], vcfg["window"][1])
