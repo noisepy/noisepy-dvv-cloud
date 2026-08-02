@@ -32,8 +32,27 @@ aws s3 ls --recursive s3://YOUR_BUCKET/ccf/v1/ | head
 Then the dv/v stage on the same stations, and read the Parquet back with the
 DuckDB query from [docs/parquet-schemas.md](../parquet-schemas.md).
 
-**Gate: do not submit a full campaign until the smoke-test dv/v series looks sane and
-you've written the observed per-station-day cost into 01_aws_setup.md.**
+**Gate 1 — legacy cross-check.** For at least 3 stations that were in the 2022
+California run, compare the new dv/v against the archived Arrow products (readable
+directly from Python — no Julia needed):
+
+```bash
+python scripts/compare_cd2022.py \
+  --new s3://YOUR_BUCKET/dvv/v1/band=2.0-4.0/CI.LJR.parquet \
+  --legacy ~/Dropbox/RESEARCH_GROUP/TIM_MARINE_PROJEcTS/Clements-Denolle-2022/data/DVV-90-DAY-COMP/2.0-4.0/CI.LJR.arrow
+```
+
+Pass: correlation > 0.9, |mean offset| < 0.05 %. Differences are expected (NoisePy vs
+SeisNoise conventions, ensemble mean vs single config) but must be small and
+explainable.
+
+**Gate 2 — cost.** Write the observed per-station-day cost into 01_aws_setup.md.
+
+Also run the dvv smoke test twice, `--combine hobiger` and `--combine
+inverse_variance`, and record which you're using for the campaign — the choice is part
+of the config hash.
+
+**Do not submit a full campaign until both gates pass.**
 
 ## Real campaign
 

@@ -18,6 +18,15 @@ Read the CloudWatch log first. Common causes:
 - Python `ImportError` — dependency drift in the image; check the pins in the
   Dockerfile (`noisepy-seis-io==0.3.5` is the critical one).
 
+## Docker image build fails on pip install
+
+Two known traps, both already encoded in `docker/`:
+- `noisepy-seis` (pandas<2) and `codameter` (pandas>=2) can never share an
+  environment — that's why there are two images. Don't try to merge them.
+- In the correlate image, `boto3` must stay pinned to match noisepy's
+  `aiobotocore==2.5.2`; unpinned, pip backtracks through years of noisepy releases
+  and dies with `ResolutionImpossible`.
+
 ## Job OOM-killed (exit 137)
 
 Correlate jobs: lower `--station_group_size` or `day_group_size` (less data per shard),

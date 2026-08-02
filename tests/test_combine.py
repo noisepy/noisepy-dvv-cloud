@@ -1,6 +1,6 @@
 import numpy as np
 
-from noisepy_dvv_cloud.combine import hobiger_combine
+from noisepy_dvv_cloud.combine import hobiger_combine, inverse_variance_combine
 
 
 def _pair(dvv, cc, valid=None):
@@ -29,6 +29,19 @@ def test_cc_squared_weighting():
     dvv, _, _ = hobiger_combine(per_pair)
     # weights 1.0 and 0.25 -> (1*1 + 0.25*0) / 1.25
     np.testing.assert_allclose(dvv, [0.8])
+
+
+def test_inverse_variance_weighting_and_error():
+    per_pair = {
+        "EN": {"dvv": np.array([1.0]), "cc": np.array([0.9]),
+               "sigma": np.array([0.1]), "valid": np.array([True])},
+        "EZ": {"dvv": np.array([0.0]), "cc": np.array([0.9]),
+               "sigma": np.array([0.2]), "valid": np.array([True])},
+    }
+    dvv, cc, sig = inverse_variance_combine(per_pair)
+    # weights 100 and 25 -> dvv = 100/125 = 0.8; sigma = 1/sqrt(125)
+    np.testing.assert_allclose(dvv, [0.8])
+    np.testing.assert_allclose(sig, [1.0 / np.sqrt(125.0)])
 
 
 def test_all_invalid_epoch_is_nan():

@@ -1,0 +1,21 @@
+# Correlate-stage image (NoisePy). Build context: repo root.
+#   docker build -f docker/Dockerfile.correlate -t dvv-cloud:correlate .
+# Separate from the dvv image because noisepy-seis pins pandas<2 and
+# codameter needs pandas>=2 — they cannot coexist in one environment.
+#
+# boto3 is pinned to match noisepy-seis's aiobotocore==2.5.2/s3fs==2023.4.0
+# pins; leaving it loose sends pip's resolver into unbounded backtracking
+# (the original CI failure). The final install is --no-deps: everything the
+# package needs is already present from the lines above.
+FROM python:3.10-slim
+
+WORKDIR /code
+
+RUN pip install --no-cache-dir \
+    noisepy-seis==0.9.93 noisepy-seis-io==0.3.5 boto3==1.26.161 "pyarrow>=12"
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip install --no-cache-dir --no-deps .
+
+ENTRYPOINT ["python", "-m", "noisepy_dvv_cloud"]

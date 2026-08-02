@@ -4,7 +4,7 @@ type: container
 parameters:
   scratch: /tmp/noisepy_scratch
 containerProperties:
-  image: ghcr.io/noisepy/noisepy-dvv-cloud:latest   # pin a short-SHA tag for a campaign
+  image: ghcr.io/noisepy/noisepy-dvv-cloud:correlate-latest   # pin correlate-<sha> for a campaign
   jobRoleArn: ''         # [REQUIRED] needs s3:PutObject/GetObject on the output bucket
   executionRoleArn: ''   # [REQUIRED] AmazonECSTaskExecutionRolePolicy (pull image + logs)
   command:

@@ -1,0 +1,13 @@
+# dv/v-stage image (codameter). Build context: repo root.
+#   docker build -f docker/Dockerfile.dvv -t dvv-cloud:dvv .
+FROM python:3.10-slim
+
+WORKDIR /code
+
+RUN pip install --no-cache-dir "codameter[aws]>=0.3.0" pyarrow s3fs
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip install --no-cache-dir ".[dvv]"
+
+ENTRYPOINT ["python", "-m", "noisepy_dvv_cloud"]

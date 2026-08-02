@@ -38,6 +38,9 @@ def main(argv: list[str] | None = None) -> int:
     p_dvv.add_argument("--use-case", default=None,
                        help="codameter use case (volcano, groundwater, ...); "
                             "omit for the Clements-Denolle fallback recipe")
+    p_dvv.add_argument("--combine", default="hobiger",
+                       choices=["hobiger", "inverse_variance"],
+                       help="cross-component combiner (compare both on the smoke test)")
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=args.loglevel,
@@ -56,7 +59,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "dvv":
         from . import dvv
 
-        dvv.run(parse_stations(args.stations), args.ccf, args.output, args.use_case)
+        dvv.run(parse_stations(args.stations), args.ccf, args.output, args.use_case,
+                combine_method=args.combine)
     return 0
 
 

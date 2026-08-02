@@ -31,11 +31,15 @@ CCF_SCHEMA = pa.schema(
 
 DVV_SCHEMA = pa.schema(
     [
-        # Clements-Denolle column convention (docs/parquet-schemas.md)
-        ("DATE", pa.date32()),
-        ("DVV", pa.float64()),  # percent
-        ("DVV_ERR", pa.float64()),  # percent, 1-sigma
-        ("CC", pa.float64()),
+        # lowercase snake_case throughout; legacy Clements-Denolle mapping
+        # (DATE/DVV/CC -> date/dvv/cc) documented in docs/parquet-schemas.md
+        ("date", pa.date32()),
+        ("dvv", pa.float64()),  # percent
+        ("dvv_err", pa.float64()),  # percent, 1-sigma total (within + methodological)
+        ("dvv_err_within", pa.float64()),  # percent, coherence/Weaver floor
+        ("dvv_err_method", pa.float64()),  # percent, processing-ensemble spread
+        ("cc", pa.float64()),
+        ("n_members", pa.int32()),  # ensemble members contributing at this epoch
         ("network", pa.string()),
         ("station", pa.string()),
         ("band", pa.string()),  # "2.0-4.0"

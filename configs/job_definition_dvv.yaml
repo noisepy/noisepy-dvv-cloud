@@ -3,7 +3,7 @@ jobDefinitionName: dvvcloud2026_dvv
 type: container
 parameters: {}
 containerProperties:
-  image: ghcr.io/noisepy/noisepy-dvv-cloud:latest
+  image: ghcr.io/noisepy/noisepy-dvv-cloud:dvv-latest   # pin dvv-<sha> for a campaign
   jobRoleArn: ''         # [REQUIRED] s3 read (ccf prefix) + write (dvv prefix)
   executionRoleArn: ''   # [REQUIRED]
   command:

@@ -10,21 +10,24 @@ readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Marine Denolle", email = "mdenolle@uw.edu" }]
 requires-python = ">=3.10,<3.11"
+# Core stays minimal: noisepy-seis pins pandas<2 while codameter needs
+# pandas>=2, so the two stages CANNOT share an environment. Each container
+# installs exactly one of the extras below; code imports them lazily.
 dependencies = [
-    "noisepy-seis",
-    "noisepy-seis-io==0.3.5",
-    "codameter[aws]",
-    "pyarrow>=14",
+    "pyarrow>=12",
     "pandas",
     "numpy",
     "boto3",
     "s3fs",
     "fsspec",
-    "datetimerange",
     "pyyaml",
 ]
 
 [project.optional-dependencies]
+# boto3 pinned to match noisepy-seis's aiobotocore==2.5.2; without it pip's
+# resolver backtracks for hours and eventually fails (see Dockerfile.correlate)
+correlate = ["noisepy-seis==0.9.93", "noisepy-seis-io==0.3.5", "boto3==1.26.161", "datetimerange"]
+dvv = ["codameter[aws]>=0.3.0"]
 dev = ["pytest", "ruff", "pre-commit"]
 
 [project.scripts]

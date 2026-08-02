@@ -21,10 +21,12 @@ For each station, independently (embarrassingly parallel — no station pairs):
 2. **Export** — daily correlation functions written to S3 as Hive-partitioned Parquet
    (one row per station-day-pair, waveform as a list column). Readable from Python,
    Julia, DuckDB, Athena — unlike the Julia `serialize` blobs of the 2022 run.
-3. **dv/v** — codameter `deviations.run_pipeline` per component pair (stretching by
-   default, config from `codameter.use_cases`), Weaver-style error bars, Hobiger
-   CC²-weighted combination across the three cross-components, written to S3 as Parquet
-   with the Clements-Denolle column convention (`DATE, DVV, CC` + `DVV_ERR`).
+3. **dv/v** — a 5-member codameter processing ensemble per station and band (baseline
+   from `codameter.use_cases` plus stack/window/reference perturbations), each member
+   combined across the three cross-components (Hobiger CC² or inverse-variance,
+   `--combine`), fed to `codameter.uq_measurement.processing_ensemble`. Output Parquet
+   carries `dvv, dvv_err, dvv_err_within, dvv_err_method, cc, n_members` — the total
+   error separates the coherence floor from the processing-choice spread.
 
 ```mermaid
 flowchart LR
@@ -46,15 +48,22 @@ flowchart LR
 | `docs/runbook/` | numbered operator runbook, QuakeScope style |
 | `docs/parquet-schemas.md` | authoritative Parquet schemas and S3 layout |
 | `docs/seed-projects/` | seed documents for spin-off projects (Julia vs Python benchmark) |
+| `docker/` | one Dockerfile per stage (the two stages have conflicting pandas pins) |
+| `scripts/compare_cd2022.py` | pre-launch validation against the archived 2022 dv/v products |
 | `station_lists/` | example station list (`NET.STA.LOC`, one per line, `#` comments) |
 
 ## Quickstart (local smoke test)
 
+The two stages need **separate environments** (`noisepy-seis` pins `pandas<2`,
+codameter needs `pandas>=2`) — install `.[correlate]` and `.[dvv]` in different venvs,
+or use the two published containers (see `docs/runbook/02_container.md`).
+
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[correlate,dev]"   # env 1
 python -m noisepy_dvv_cloud correlate \
     --stations CI.LJR. --start 2023.001 --end 2023.010 \
     --output s3://YOUR_BUCKET/smoke/ccf/
+pip install -e ".[dvv,dev]"         # env 2
 python -m noisepy_dvv_cloud dvv \
     --stations CI.LJR. --ccf s3://YOUR_BUCKET/smoke/ccf/ \
     --output s3://YOUR_BUCKET/smoke/dvv/ --use-case groundwater

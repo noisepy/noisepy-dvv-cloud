@@ -37,18 +37,26 @@ re-submitting an identical campaign command is an idempotent sweep, not a duplic
 s3://<bucket>/dvv/v1/band=2.0-4.0/CI.LJR.parquet
 ```
 
-One file per station per octave band, one row per day. Column names keep the
-Clements-Denolle-2022 Arrow convention (`DATE, DVV, CC`) so old and new products diff
-directly; `DVV_ERR` is new (codameter Weaver/Clarke-style 1-sigma).
+One file per station per octave band, one row per day. All column names are lowercase
+snake_case. The legacy Clements-Denolle-2022 Arrow files used `DATE, DVV, CC`
+(uppercase); when diffing old vs new, lowercase the legacy columns
+(`scripts/compare_cd2022.py` does this).
+
+The dv/v value is the mean of a 5-member processing ensemble (baseline config plus
+stack halved/doubled, coda window shifted, reference scheme swapped — see
+`dvv.ensemble_configs`), combined across EN/EZ/NZ per member.
 
 | column | type | notes |
 |---|---|---|
-| `DATE` | date32 | |
-| `DVV` | float64 | percent; dv/v < 0 dilates the coda (codameter sign convention) |
-| `DVV_ERR` | float64 | percent, 1-sigma |
-| `CC` | float64 | Hobiger-combined: `sum(CC^3)/sum(CC^2)` across EN, EZ, NZ |
+| `date` | date32 | |
+| `dvv` | float64 | percent; dv/v < 0 dilates the coda (codameter sign convention); ensemble mean |
+| `dvv_err` | float64 | percent, 1-sigma total = sqrt(within² + method²) |
+| `dvv_err_within` | float64 | percent; Weaver/Clarke (2011) coherence floor |
+| `dvv_err_method` | float64 | percent; spread across the processing ensemble |
+| `cc` | float64 | baseline member, combined across pairs |
+| `n_members` | int32 | ensemble members with a finite dv/v at this epoch |
 | `network`, `station`, `band` | string | denormalized for cross-file queries |
-| `config_hash` | string | sha1[:12] of the codameter processing config |
+| `config_hash` | string | sha1[:12] of baseline config + combiner choice |
 
 ## Example queries
 
