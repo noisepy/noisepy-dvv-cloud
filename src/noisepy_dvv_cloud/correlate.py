@@ -49,7 +49,9 @@ def build_config(start: datetime, end: datetime, stations: list[str]):
         cc_method=CCMethod.XCORR,
         freq_norm=FreqNorm.RMA,
         time_norm=TimeNorm.NO,
-        rm_resp=RmResp.INV,
+        # raw amplitudes: dv/v only needs phase, and response removal is one
+        # of the slowest preprocessing steps (2026 campaign decision)
+        rm_resp=RmResp.NO,
         substack=True,
         substack_windows=1,
         stack_method=StackMethod.LINEAR,

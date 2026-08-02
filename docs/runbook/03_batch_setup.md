@@ -10,7 +10,7 @@
 ## Output bucket
 
 ```bash
-aws s3 mb s3://YOUR_BUCKET --region us-east-2
+aws s3 mb s3://YOUR_BUCKET --region us-west-2
 ```
 
 Put the name in `src/noisepy_dvv_cloud/parameters.py` (`OUTPUT_BUCKET`).

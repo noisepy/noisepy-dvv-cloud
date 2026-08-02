@@ -4,7 +4,10 @@ Fill these in per campaign (QuakeScope convention: keep a filled copy on the
 controller machine only; commit only empty strings).
 """
 
-AWS_REGION = "us-east-2"
+# us-west-2 co-locates compute with scedc-pds/ncedc-pds — the correlate
+# stage is read-heavy, so same-region S3 reads cut both wall time and risk
+# of cross-region transfer cost
+AWS_REGION = "us-west-2"
 
 # AWS Batch object names, created in docs/runbook/03_batch_setup.md
 COMPUTE_ENVIRONMENT = "dvvcloud2026_env"

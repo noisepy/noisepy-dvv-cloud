@@ -1,14 +1,14 @@
 # 01 — AWS setup
 
-Region: **us-east-2** (Ohio) for everything, matching QuakeScope. The public archives
-(`scedc-pds`, `ncedc-pds`) are in us-west-2; cross-region reads work and Fargate
-capacity in us-east-2 has been reliable, but if egress cost dominates a large campaign,
-consider running in us-west-2 instead — nothing in this repo hardcodes the region
-except `parameters.AWS_REGION`.
+Region: **us-west-2** (Oregon) for everything — unlike QuakeScope (us-east-2), this
+pipeline is dominated by S3 reads from `scedc-pds`/`ncedc-pds`, which live in
+us-west-2. Co-locating compute with the archives cuts read latency and removes any
+cross-region transfer risk. Nothing in this repo hardcodes the region except
+`parameters.AWS_REGION`.
 
 1. Sign in, create an access key: **Console → IAM → Users → your user → Security
    credentials → Create access key** (CLI use case).
-2. `aws configure` with that key; set default region `us-east-2`.
+2. `aws configure` with that key; set default region `us-west-2`.
 3. Billing guardrail: **Console → Billing → Budgets → Create budget**, monthly cost
    budget with an alert at your comfort level. Fargate Spot for this workload runs
    roughly $0.01–0.05 per station-day of correlation (verify on the smoke test —
