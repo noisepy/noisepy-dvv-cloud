@@ -1,0 +1,10 @@
+# aws batch create-compute-environment --no-cli-pager --cli-input-yaml file://configs/compute_environment.yaml
+computeEnvironmentName: dvvcloud2026_env
+type: MANAGED
+state: ENABLED
+computeResources:
+  type: FARGATE_SPOT
+  # throughput knob: 256 vCPU / 4 vCPU per correlate job = 64 concurrent jobs
+  maxvCpus: 256
+  subnets: ['']            # [REQUIRED] all subnets of the VPC
+  securityGroupIds: ['']   # [REQUIRED] default SG is fine (only egress needed)

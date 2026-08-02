@@ -1,0 +1,43 @@
+# aws batch register-job-definition --no-cli-pager --cli-input-yaml file://configs/job_definition_correlate.yaml
+jobDefinitionName: dvvcloud2026_correlate
+type: container
+parameters:
+  scratch: /tmp/noisepy_scratch
+containerProperties:
+  image: ghcr.io/noisepy/noisepy-dvv-cloud:latest   # pin a short-SHA tag for a campaign
+  jobRoleArn: ''         # [REQUIRED] needs s3:PutObject/GetObject on the output bucket
+  executionRoleArn: ''   # [REQUIRED] AmazonECSTaskExecutionRolePolicy (pull image + logs)
+  command:
+    - correlate
+    - "--stations"
+    - Ref::stations
+    - "--start"
+    - Ref::start
+    - "--end"
+    - Ref::end
+    - "--output"
+    - Ref::output
+    - "--scratch"
+    - Ref::scratch
+  resourceRequirements:
+    # NoisePy CC is memory-hungry; 4 vCPU / 30 GB is the largest 1:7.5 Fargate
+    # combo. Revisit after the smoke test (check_memory logs actual use).
+    - { value: '4', type: VCPU }
+    - { value: '30720', type: MEMORY }
+  ephemeralStorage:
+    sizeInGiB: 100   # scratch numpy stores before Parquet export
+  networkConfiguration:
+    assignPublicIp: ENABLED
+  fargatePlatformConfiguration:
+    platformVersion: LATEST
+  runtimePlatform:
+    operatingSystemFamily: LINUX
+    cpuArchitecture: X86_64
+timeout:
+  attemptDurationSeconds: 86400
+platformCapabilities: [FARGATE]
+retryStrategy:
+  attempts: 10
+  evaluateOnExit:
+    - { action: "RETRY", onStatusReason: "Your Spot Task was interrupted." }
+    - { action: "EXIT", onReason: "*" }

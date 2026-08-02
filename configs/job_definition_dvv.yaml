@@ -1,0 +1,36 @@
+# aws batch register-job-definition --no-cli-pager --cli-input-yaml file://configs/job_definition_dvv.yaml
+jobDefinitionName: dvvcloud2026_dvv
+type: container
+parameters: {}
+containerProperties:
+  image: ghcr.io/noisepy/noisepy-dvv-cloud:latest
+  jobRoleArn: ''         # [REQUIRED] s3 read (ccf prefix) + write (dvv prefix)
+  executionRoleArn: ''   # [REQUIRED]
+  command:
+    - dvv
+    - "--stations"
+    - Ref::stations
+    - "--ccf"
+    - Ref::ccf
+    - "--output"
+    - Ref::output
+  resourceRequirements:
+    # dv/v is cheap: one station's full CCF history fits easily in 8 GB
+    - { value: '2', type: VCPU }
+    - { value: '8192', type: MEMORY }
+  networkConfiguration:
+    assignPublicIp: ENABLED
+  fargatePlatformConfiguration:
+    platformVersion: LATEST
+  runtimePlatform:
+    operatingSystemFamily: LINUX
+    cpuArchitecture: X86_64
+timeout:
+  attemptDurationSeconds: 21600
+platformCapabilities: [FARGATE]
+retryStrategy:
+  attempts: 10
+  evaluateOnExit:
+    - { action: "RETRY", onStatusReason: "Your Spot Task was interrupted." }
+    - { action: "RETRY", onReason: "Job attempt duration exceeded timeout" }
+    - { action: "EXIT", onReason: "*" }

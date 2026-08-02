@@ -1,0 +1,4 @@
+# Smoke-test stations (SCEDC, broadband). Format: NET.STA.LOC, trailing dot = empty loc.
+CI.LJR.   # Lake Hughes — the Clements-Denolle 2022 reference station
+CI.RXH.
+CI.PASC.

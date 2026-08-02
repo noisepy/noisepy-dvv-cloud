@@ -1,0 +1,7 @@
+# aws batch create-job-queue --no-cli-pager --cli-input-yaml file://configs/job_queue.yaml
+jobQueueName: dvvcloud2026_queue
+state: ENABLED
+priority: 1
+computeEnvironmentOrder:
+  - order: 1
+    computeEnvironment: dvvcloud2026_env
