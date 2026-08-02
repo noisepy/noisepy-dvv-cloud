@@ -20,10 +20,13 @@ containerProperties:
     - "--scratch"
     - Ref::scratch
   resourceRequirements:
-    # NoisePy CC is memory-hungry; 4 vCPU / 30 GB is the largest 1:7.5 Fargate
-    # combo. Revisit after the smoke test (check_memory logs actual use).
-    - { value: '4', type: VCPU }
-    - { value: '30720', type: MEMORY }
+    # 2 vCPU: NoisePy's thread pool measured only ~1.7x speedup on 4 threads
+    # (GIL-bound ifft loop), so small tasks x more of them is cheaper.
+    # 16 GB: whiten() transiently holds ~1 GB/channel (float64 + a dead
+    # 433 MB allocation upstream); 4-station shards peak ~12 GB.
+    # Revisit both after the smoke test.
+    - { value: '2', type: VCPU }
+    - { value: '16384', type: MEMORY }
   ephemeralStorage:
     sizeInGiB: 100   # scratch numpy stores before Parquet export
   networkConfiguration:

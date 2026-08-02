@@ -4,7 +4,7 @@ type: MANAGED
 state: ENABLED
 computeResources:
   type: FARGATE_SPOT
-  # throughput knob: 256 vCPU / 4 vCPU per correlate job = 64 concurrent jobs
+  # throughput knob: 256 vCPU / 2 vCPU per correlate job = 128 concurrent jobs
   maxvCpus: 256
   subnets: ['']            # [REQUIRED] all subnets of the VPC
   securityGroupIds: ['']   # [REQUIRED] default SG is fine (only egress needed)

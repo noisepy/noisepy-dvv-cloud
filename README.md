@@ -16,8 +16,9 @@ for why we moved off SeisNoise.jl and how we plan to benchmark the two stacks.
 For each station, independently (embarrassingly parallel — no station pairs):
 
 1. **Correlate** — NoisePy `cross_correlate` with `acorr_only=True`, which produces the
-   six same-station component pairs (EE, EN, EZ, NN, NZ, ZZ) per time chunk, then
-   `stack_cross_correlations` into daily substacks.
+   six same-station component pairs (EE, EN, EZ, NN, NZ, ZZ). One 24-h chunk with
+   `substack=False` is already the daily linear stack (windows averaged in the
+   spectral domain), so there is no separate stacking stage.
 2. **Export** — daily correlation functions written to S3 as Hive-partitioned Parquet
    (one row per station-day-pair, waveform as a list column). Readable from Python,
    Julia, DuckDB, Athena — unlike the Julia `serialize` blobs of the 2022 run.
