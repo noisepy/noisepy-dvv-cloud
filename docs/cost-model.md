@@ -12,7 +12,7 @@ price, or the real station inventory. Regenerate with
 | chain s/station-day-channel (resp. removed, 20 sps) | 2.1 s | measured 2026-08-06, M1, n=124 (seisfetch three-archive validation) |
 | same w/o response removal | ~1.6 s | same run, component split |
 | container penalty | x1.3 | seisfetch benchmarks/RESULTS.md (recordlist parse path) |
-| correlate, per pair-day (substack=False) | 0.0606 s @40 sps | noisepy-dvv-cloud 2026 audit (25-30% of compute) |
+| correlate, per pair-day (substack=False) | 0.0606 s @20 sps | measured 2026-08-06 through noisepy correlate (188 windows) |
 | codameter stretching, fixed ref | 0.18 ms/day/config | measured 2026-08-06 (codavenv, 2561-sample CCFs) |
 | codameter stretching, moving ref | 5.7 ms/day/config | same |
 | Fargate on-demand | $0.04048/vCPU-h + $0.004445/GB-h | aws.amazon.com/fargate/pricing, 2026-08-06; QuakeScope runbook cross-check |
