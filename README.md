@@ -2,7 +2,7 @@
 
 Cloud-scale single-station dv/v monitoring: NoisePy cross-component correlations on AWS
 Fargate Spot, Parquet products on S3, robust dv/v time series with
-[codameter](https://github.com/UW-ESS-DS/codameter).
+[codameter](https://github.com/Denolle-lab/codameter).
 
 This project is the Python successor to the Julia pipeline of
 [Clements & Denolle (2023)](https://doi.org/10.1029/2022JB025553) and reuses the
@@ -48,6 +48,7 @@ flowchart LR
 | `configs/` | AWS Batch objects as `aws --cli-input-yaml` skeletons + pipeline configs |
 | `docs/runbook/` | numbered operator runbook, QuakeScope style |
 | `docs/parquet-schemas.md` | authoritative Parquet schemas and S3 layout |
+| `docs/cost-model.md` | cloud cost model (Lambda daily dv/v, 25-year Spot backfill, moving-subarray CCFs) — regenerate with `python tools/cost_model.py` |
 | `docs/seed-projects/` | seed documents for spin-off projects (Julia vs Python benchmark) |
 | `docker/` | one Dockerfile per stage (the two stages have conflicting pandas pins) |
 | `scripts/compare_cd2022.py` | pre-launch validation against the archived 2022 dv/v products |
