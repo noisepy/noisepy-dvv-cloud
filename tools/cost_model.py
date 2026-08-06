@@ -13,8 +13,15 @@ the real station inventory (QuakeScope networks/*.zip). Regenerate the report:
 
     python tools/cost_model.py [--networks ~/GitHub/QuakeScope/networks]
 
-writes docs/cost-model.md and docs/cost-model-figs/*.png deterministically
-(no timestamps in the body; the as-of dates are explicit parameters).
+writes docs/cost-model.md, docs/cost-model.html and docs/cost-model-figs/*.png
+deterministically (no timestamps in the body; the as-of dates are explicit
+parameters).
+
+Requires beyond the package deps: numpy, pandas + tabulate (to_markdown),
+scipy (KDTree geometry), matplotlib (figures) — tooling-only, deliberately
+NOT declared in pyproject.toml so the runtime containers stay lean:
+
+    pip install numpy pandas tabulate scipy matplotlib
 """
 
 from __future__ import annotations
@@ -136,15 +143,27 @@ def _archive(net: str) -> str:
 def load_stations(networks_dir: Path, start: float, end: float) -> pd.DataFrame:
     """One row per unique net.sta with a broadband channel (BH*/HH*) whose
     operating window overlaps [start, end) (year.doy floats as in the CSVs)."""
-    frames = []
-    for z in sorted(networks_dir.glob("*.zip")):
+    frames, skipped = [], []
+    zips = sorted(networks_dir.glob("*.zip"))
+    if not zips:
+        raise FileNotFoundError(
+            f"no networks/*.zip found in {networks_dir} — pass --networks "
+            "pointing at the QuakeScope station inventory"
+        )
+    for z in zips:
         try:
             with zipfile.ZipFile(z) as zf:
                 name = zf.namelist()[0]
                 df = pd.read_csv(io.BytesIO(zf.read(name)))
-        except Exception:
+        except Exception as e:
+            skipped.append(f"{z.name} ({type(e).__name__})")
             continue
         frames.append(df)
+    if not frames:
+        raise RuntimeError(f"all {len(zips)} network zips failed to parse")
+    if skipped:
+        print(f"warning: skipped {len(skipped)} network file(s): "
+              f"{', '.join(skipped[:5])}{'...' if len(skipped) > 5 else ''}")
     allst = pd.concat(frames, ignore_index=True)
     ch = allst["channels"].fillna("")
     bb = ch.str.contains("BH") | ch.str.contains("HH")
@@ -208,6 +227,12 @@ def tile_census(df: pd.DataFrame, radius_km: float, step_km: float, pairs):
     nearest their midpoint (each pair computed exactly once)."""
     from scipy.spatial import cKDTree
 
+    if len(df) < 2 or len(pairs) == 0:
+        raise ValueError(
+            f"tile census needs >=2 stations and >=1 pair "
+            f"(got {len(df)} stations, {len(pairs)} pairs) — widen the time "
+            "window or the pair-distance cutoff"
+        )
     step_deg = step_km / 111.32
     lat = df["latitude"].values
     lon = df["longitude"].values
@@ -223,6 +248,11 @@ def tile_census(df: pd.DataFrame, radius_km: float, step_km: float, pairs):
     n_in = np.array([len(tree.query_ball_point(c, r=radius_km)) for c in c_xyz])
     keep = n_in >= 2
     centers, c_xyz, n_in = centers[keep], c_xyz[keep], n_in[keep]
+    if len(centers) == 0:
+        raise ValueError(
+            "no tile holds >=2 stations at this radius/step — inventory too "
+            "sparse for a subarray survey"
+        )
     # midpoint assignment
     mid = 0.5 * (st_xyz[pairs[:, 0]] + st_xyz[pairs[:, 1]])
     mid /= np.linalg.norm(mid, axis=1, keepdims=True) / 6371.0
@@ -478,6 +508,85 @@ def make_figures(lam, alt, census, tiles_df=None):
     plt.close(fig)
 
 
+def render_html(md_text: str) -> None:
+    """Self-contained HTML twin of cost-model.md: tables + base64-inlined
+    PNGs, stdlib only — one file to mail to a colleague."""
+    import base64
+    import html as html_mod
+    import re
+
+    def inline_img(m):
+        path = REPO / "docs" / m.group(2).replace("cost-model-figs/", "cost-model-figs/")
+        path = REPO / "docs" / m.group(2)
+        if not path.exists():
+            return ""
+        b64 = base64.b64encode(path.read_bytes()).decode()
+        return (
+            f'<figure><img alt="{m.group(1)}" '
+            f'src="data:image/png;base64,{b64}"/></figure>'
+        )
+
+    out = [
+        """<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloud cost model - seisfetch + NoisePy</title>
+<style>
+body{font:15px/1.55 -apple-system,system-ui,sans-serif;max-width:60rem;
+margin:2rem auto;padding:0 1rem;color:#1c2326;background:#fbfbfa}
+table{border-collapse:collapse;font-size:.85rem;margin:.8rem 0;
+font-variant-numeric:tabular-nums}
+th{text-align:left;border-bottom:2px solid #d8ddda;padding:.3rem .7rem .3rem 0}
+td{border-bottom:1px solid #e4e8e5;padding:.3rem .7rem .3rem 0}
+code{background:#eef0ee;padding:.08em .3em;border-radius:3px;font-size:.85em}
+h1,h2,h3{line-height:1.25}figure{margin:1rem 0}img{max-width:100%}
+strong{color:#0e6e4c}
+</style>"""
+    ]
+    in_table = False
+    for line in md_text.splitlines():
+        img = re.match(r"!\[([^\]]*)\]\(([^)]+)\)", line.strip())
+        if img:
+            out.append(inline_img(img))
+            continue
+        if line.startswith("|"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if all(set(c) <= {"-", " ", ":"} and c for c in cells):
+                continue
+            tag = "th" if not in_table else "td"
+            if not in_table:
+                out.append("<table>")
+                in_table = True
+            row = "".join(
+                f"<{tag}>{html_mod.escape(c).replace('`', '')}</{tag}>"
+                for c in cells
+            )
+            out.append(f"<tr>{row}</tr>")
+            continue
+        if in_table:
+            out.append("</table>")
+            in_table = False
+        if line.startswith("## "):
+            out.append(f"<h2>{html_mod.escape(line[3:])}</h2>")
+        elif line.startswith("# "):
+            out.append(f"<h1>{html_mod.escape(line[2:])}</h1>")
+        elif line.startswith("- "):
+            t = html_mod.escape(line[2:])
+            t = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", t)
+            out.append(f"<div>&bull; {t}</div>")
+        elif re.match(r"^\d+\. ", line):
+            t = html_mod.escape(line)
+            t = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", t)
+            out.append(f"<div>{t}</div>")
+        elif line.strip():
+            t = html_mod.escape(line)
+            t = re.sub(r"`([^`]+)`", r"<code>\1</code>", t)
+            t = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", t)
+            out.append(f"<p>{t}</p>")
+    if in_table:
+        out.append("</table>")
+    DOC.with_suffix(".html").write_text("\n".join(out))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -513,7 +622,7 @@ price, or the real station inventory. Regenerate with
 | chain s/station-day-channel (resp. removed, 20 sps) | 2.1 s | measured 2026-08-06, M1, n=124 (seisfetch three-archive validation) |
 | same w/o response removal | ~1.6 s | same run, component split |
 | container penalty | x{t.container_penalty} | seisfetch benchmarks/RESULTS.md (recordlist parse path) |
-| correlate, per pair-day (substack=False) | {t.correlate_pair_s} s @40 sps | noisepy-dvv-cloud 2026 audit (25-30% of compute) |
+| correlate, per pair-day (substack=False) | {t.correlate_pair_s} s @20 sps | measured 2026-08-06 through noisepy correlate (188 windows) |
 | codameter stretching, fixed ref | {t.codameter_fixed_ms_day_cfg} ms/day/config | measured 2026-08-06 (codavenv, 2561-sample CCFs) |
 | codameter stretching, moving ref | {t.codameter_moving_ms_day_cfg} ms/day/config | same |
 | Fargate on-demand | ${p.fargate_od_vcpu_h}/vCPU-h + ${p.fargate_od_gb_h}/GB-h | aws.amazon.com/fargate/pricing, {p.asof}; QuakeScope runbook cross-check |
@@ -625,7 +734,8 @@ should permit.)
   roughly the price of a laptop.
 """
     DOC.write_text(doc)
-    print(f"wrote {DOC}")
+    render_html(doc)
+    print(f"wrote {DOC} and {DOC.with_suffix('.html')}")
     print(f"figures in {FIG_DIR}")
 
 
