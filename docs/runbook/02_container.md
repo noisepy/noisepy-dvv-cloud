@@ -34,3 +34,13 @@ python -c "import pyarrow.dataset as ds; print(ds.dataset('/tmp/dvvtest/ccf', pa
 your own bucket.)
 
 Next: [03_batch_setup.md](03_batch_setup.md)
+
+## Measured on the first local build (2026-08-08)
+
+- correlate image: **1.1 GB** (linux/amd64).
+- Images are **x86-only**: obspy ships no linux/aarch64 wheels, so an arm64
+  build tries to compile obspy/numcodecs/psutil from source and fails on
+  python:3.10-slim (no gcc). Keep Batch on X86_64 (as the job definitions
+  already do); Graviton becomes available only after the seisfetch
+  migration removes obspy from the correlate image.
+- Building on an Apple Silicon laptop requires `--platform linux/amd64`.

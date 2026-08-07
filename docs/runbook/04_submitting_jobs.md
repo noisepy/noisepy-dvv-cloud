@@ -80,3 +80,5 @@ aws batch list-jobs --job-queue dvvcloud2026_queue --job-status RUNNABLE \
 ```
 
 Next: [05_monitoring.md](05_monitoring.md)
+
+(Gate 0 passed 2026-08-08 — see 02_container.md)
