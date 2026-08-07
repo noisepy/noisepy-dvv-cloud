@@ -10,9 +10,11 @@ cross-region transfer risk. Nothing in this repo hardcodes the region except
    credentials → Create access key** (CLI use case).
 2. `aws configure` with that key; set default region `us-west-2`.
 3. Billing guardrail: **Console → Billing → Budgets → Create budget**, monthly cost
-   budget with an alert at your comfort level. Fargate Spot for this workload runs
-   roughly $0.01–0.05 per station-day of correlation (verify on the smoke test —
-   record the number here).
+   budget with an alert at your comfort level. The cost model
+   ([docs/cost-model.md](../cost-model.md), calibrated on measured seisfetch/NoisePy
+   timings 2026-08-06) puts Fargate Spot correlation at roughly $0.0002–0.001 per
+   station-day — verify on the smoke test and record the observed number here
+   (Gate 2).
 4. Verify: `aws sts get-caller-identity` returns your account.
 
 Next: [02_container.md](02_container.md)
