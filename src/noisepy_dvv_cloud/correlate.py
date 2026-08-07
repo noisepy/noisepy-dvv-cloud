@@ -30,7 +30,7 @@ def build_config(start: datetime, end: datetime, stations: list[str]):
     )
 
     networks = sorted({s.split(".")[0] for s in stations})
-    return ConfigParameters(
+    cfg = ConfigParameters(
         start_date=start,
         end_date=end,
         networks=networks,
@@ -62,6 +62,11 @@ def build_config(start: datetime, end: datetime, stations: list[str]):
         stack_method=StackMethod.LINEAR,
         inc_hours=24,
     )
+    # the public archive buckets (scedc-pds/ncedc-pds) must be read
+    # anonymously — without this, fsspec looks for AWS credentials and the
+    # container dies with NoCredentialsError (found on the first smoke test)
+    cfg.storage_options["s3"] = {"anon": True}
+    return cfg
 
 
 def config_hash(cfg) -> str:
@@ -131,15 +136,17 @@ def run(stations: list[str], start: datetime, end: datetime, output: str, scratc
 def export_daily_ccfs(cc_store, cfg, chash: str) -> list[dict]:
     """Flatten CrossCorrelation objects into CCF_SCHEMA rows (one per day+pair).
 
-    TODO(first smoke test): confirm the CrossCorrelation field names
-    (src_chan/rec_chan component labels, 'ngood' in parameters) and the
-    component label set under acorr_only (expect EE, EN, EZ, NN, NZ, ZZ).
+    Field names confirmed on the 2026-08-08 smoke test: ``cc.src``/``cc.rec``
+    are ``ChannelType`` objects (orientation via ``get_orientation()``), and
+    window counts live in ``cc.parameters["ngood"]``.
     """
     rows: list[dict] = []
     for src, rec in cc_store.get_station_pairs():
         for ts in cc_store.get_timespans(src, rec):
             for cc in cc_store.read(ts, src, rec):
-                pair = f"{cc.src.type.name[-1]}{cc.rec.type.name[-1]}".upper()
+                pair = (
+                    f"{cc.src.get_orientation()}{cc.rec.get_orientation()}"
+                ).upper()
                 params = getattr(cc, "parameters", {}) or {}
                 rows.append(
                     {

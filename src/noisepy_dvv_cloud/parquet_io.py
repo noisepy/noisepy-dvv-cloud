@@ -130,6 +130,12 @@ def write_dvv(
     df = df.assign(network=network, station=station, band=band_str, config_hash=config_hash)
     table = pa.Table.from_pandas(df, schema=DVV_SCHEMA, preserve_index=False)
     path = f"{root.rstrip('/')}/band={band_str}/{network}.{station}.parquet"
+    if "://" not in path:
+        # S3 "directories" are implicit; local filesystems are not — without
+        # this the local smoke test dies on the first band (found 2026-08-08)
+        import os
+
+        os.makedirs(os.path.dirname(path), exist_ok=True)
     pq.write_table(table, path)
     return path
 
