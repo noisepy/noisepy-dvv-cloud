@@ -49,6 +49,10 @@ def main() -> int:
                     "verified 2026-08-09: legacy lags a centered-smoothed "
                     "series by ~45 days; trailing-90d at zero lag gives "
                     "LJR r=0.985, ARV 0.922). 0 = off")
+    ap.add_argument("--burn-in-days", type=int, default=150,
+                    help="drop this many days from the start of the new "
+                    "series: the fixed reference is immature early in the "
+                    "campaign window and biases the comparison")
     ap.add_argument("--demean", action="store_true", default=True,
                     help="compare demeaned series: the two products use "
                     "different reference epochs, so a constant offset is a "
@@ -65,6 +69,10 @@ def main() -> int:
         return 1
 
     both = both.sort_values("date").reset_index(drop=True)
+    if args.burn_in_days and len(both) > 0:
+        t0 = pd.to_datetime(both["date"].iloc[0])
+        keep = pd.to_datetime(both["date"]) >= t0 + pd.Timedelta(days=args.burn_in_days)
+        both = both[keep].reset_index(drop=True)
     new_s = both["dvv_new"]
     if args.smooth_days:
         # trailing, matching the legacy product's construction — centered
