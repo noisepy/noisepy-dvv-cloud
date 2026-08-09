@@ -119,7 +119,12 @@ def station_dvv(
     combine_method: str,
 ) -> pd.DataFrame:
     """Ensemble dv/v for one station and band, combined across EN, EZ, NZ."""
+    from codameter import __version__ as _codameter_version
     from codameter.deviations import run_pipeline
+
+    _CODAMETER_PHYSICAL = tuple(
+        int(x) for x in _codameter_version.split(".")[:2]
+    ) >= (0, 4)
     from codameter.uq_measurement import processing_ensemble, weaver_stretching_error
 
     cfg, eps = dvv_config(use_case, band)
@@ -144,12 +149,12 @@ def station_dvv(
             # keep those epochs usable with the same nominal value
             cc = np.where(np.isfinite(cc), cc, np.where(valid, 0.8, np.nan))
             # SIGN CONVENTION (Gate 1 finding, 2026-08-08): codameter
-            # run_pipeline returns the stretch factor epsilon = -dv/v
-            # (ground-truthed: imposing +0.5% velocity yields -0.50%).
-            # Negate so the stored column is physical dv/v — verified
-            # against CD2022 and seasonal hydrology at LJR/RXH/ARV, where
-            # the raw output anticorrelated with both at all 3 stations.
-            dvv = -np.asarray(dvv)
+            # run_pipeline < 0.4 returned the stretch factor
+            # epsilon = -dv/v; codameter 0.4+ returns physical dv/v
+            # natively (Denolle-Lab/codameter#36). Negate only on the old
+            # convention so the stored column is always physical dv/v.
+            if not _CODAMETER_PHYSICAL:
+                dvv = -np.asarray(dvv)
             # real data produces epochs with cc <= 0 (glitch days,
             # anticorrelated coda); codameter's Weaver error correctly
             # requires cc in (0, 1] — mask those epochs instead of dying
