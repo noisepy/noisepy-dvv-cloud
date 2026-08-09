@@ -143,10 +143,23 @@ def station_dvv(
             # non-stretching estimators / inversion reference return NaN CC;
             # keep those epochs usable with the same nominal value
             cc = np.where(np.isfinite(cc), cc, np.where(valid, 0.8, np.nan))
+            # SIGN CONVENTION (Gate 1 finding, 2026-08-08): codameter
+            # run_pipeline returns the stretch factor epsilon = -dv/v
+            # (ground-truthed: imposing +0.5% velocity yields -0.50%).
+            # Negate so the stored column is physical dv/v — verified
+            # against CD2022 and seasonal hydrology at LJR/RXH/ARV, where
+            # the raw output anticorrelated with both at all 3 stations.
+            dvv = -np.asarray(dvv)
+            # real data produces epochs with cc <= 0 (glitch days,
+            # anticorrelated coda); codameter's Weaver error correctly
+            # requires cc in (0, 1] — mask those epochs instead of dying
+            # (found on the Gate 1 full-year run, 2019 CI.RXH)
             sigma = np.array(
                 [
-                    weaver_stretching_error(c, f_center, vcfg["window"][0], vcfg["window"][1])
-                    if np.isfinite(c)
+                    weaver_stretching_error(
+                        min(c, 1.0), f_center, vcfg["window"][0], vcfg["window"][1]
+                    )
+                    if np.isfinite(c) and 0.0 < c <= 1.0 + 1e-12
                     else np.nan
                     for c in cc
                 ]
