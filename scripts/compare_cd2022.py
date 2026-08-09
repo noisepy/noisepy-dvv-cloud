@@ -43,9 +43,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--new", required=True, help="new dv/v parquet (s3:// or local)")
     ap.add_argument("--legacy", required=True, help="2022 .arrow file")
-    ap.add_argument("--smooth-days", type=int, default=45,
-                    help="centered rolling mean on the new daily series to "
-                    "match the legacy 90-day-comp scale (0 = off)")
+    ap.add_argument("--smooth-days", type=int, default=90,
+                    help="TRAILING rolling mean on the new daily series. The "
+                    "CD2022 90-DAY-COMP is a trailing stack (lag-scan "
+                    "verified 2026-08-09: legacy lags a centered-smoothed "
+                    "series by ~45 days; trailing-90d at zero lag gives "
+                    "LJR r=0.985, ARV 0.922). 0 = off")
     ap.add_argument("--demean", action="store_true", default=True,
                     help="compare demeaned series: the two products use "
                     "different reference epochs, so a constant offset is a "
@@ -64,7 +67,9 @@ def main() -> int:
     both = both.sort_values("date").reset_index(drop=True)
     new_s = both["dvv_new"]
     if args.smooth_days:
-        new_s = new_s.rolling(args.smooth_days, center=True, min_periods=20).mean()
+        # trailing, matching the legacy product's construction — centered
+        # smoothing leaves a ~45-day phase shift that depresses r
+        new_s = new_s.rolling(args.smooth_days, center=False, min_periods=40).mean()
     m = new_s.notna()
     a, b = new_s[m], both["dvv_2022"][m]
     offset = (a - b).mean()
