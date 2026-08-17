@@ -27,7 +27,11 @@ dependencies = [
 # boto3 pinned to match noisepy-seis's aiobotocore==2.5.2; without it pip's
 # resolver backtracks for hours and eventually fails (see Dockerfile.correlate)
 correlate = ["noisepy-seis==0.9.93", "noisepy-seis-io==0.3.5", "boto3==1.26.161", "datetimerange"]
-dvv = ["codameter[aws]>=0.3.0"]
+# PINNED, not a range: the dv/v sign convention is version-dependent at the
+# 0.4 boundary (codameter >= 0.4 no longer needs the negation -- see the
+# version-aware branch in dvv.py). A floating range silently flips the sign of
+# every product between a smoke run and a campaign run.
+dvv = ["codameter[aws]==0.4.0"]
 dev = ["pytest", "ruff", "pre-commit"]
 
 [project.scripts]
@@ -38,3 +42,50 @@ packages = ["src/noisepy_dvv_cloud"]
 
 [tool.ruff]
 line-length = 100
+
+# --------------------------------------------------------------------------- #
+#  pixi
+#
+#  The two stages cannot share an environment (noisepy-seis pins pandas<2,
+#  codameter needs pandas>=2), so they are two pixi environments over the two
+#  extras above. pixi maps each name in [project.optional-dependencies] to a
+#  feature of the same name; the environments below compose them. They solve
+#  independently -- do NOT put them in a shared solve-group.
+#
+#      pixi run -e correlate ...     # stage 1
+#      pixi run -e dvv ...           # stage 2
+# --------------------------------------------------------------------------- #
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+# osx-arm64 = the laptop; linux-64 = what the Batch images run on (obspy ships
+# no linux/aarch64 wheels, so linux-aarch64 stays off the list until the
+# seisfetch migration removes obspy from the correlate stage).
+platforms = ["osx-arm64", "linux-64"]
+
+[tool.pixi.dependencies]
+# Intersection of noisepy (<3.11) and codameter (>=3.10).
+python = "3.10.*"
+
+[tool.pixi.pypi-dependencies]
+noisepy-dvv-cloud = { path = ".", editable = true }
+
+# awscli lives in its own environment on purpose. conda-forge's awscli pulls
+# ruamel-yaml 0.19, and noisepy-seis pins pydantic-yaml==1.0 which caps
+# ruamel-yaml <0.18 -- putting it in the correlate environment makes the solve
+# unsatisfiable. Operator tooling is not a dependency of either stage.
+[tool.pixi.feature.ops.dependencies]
+awscli = "*"
+
+[tool.pixi.environments]
+correlate = ["correlate", "dev"]
+dvv = ["dvv", "dev"]
+ops = ["ops"]
+
+# Sanity checks -- run both after any dependency change. `verify-dvv` prints the
+# codameter version because the sign convention depends on it.
+[tool.pixi.feature.correlate.tasks]
+verify-correlate = "python -c \"import noisepy.seis, noisepy.seis.io, pandas; print('correlate ok | pandas', pandas.__version__)\""
+
+[tool.pixi.feature.dvv.tasks]
+verify-dvv = "python -c \"import codameter, pandas; print('dvv ok | codameter', codameter.__version__, '| pandas', pandas.__version__)\""
