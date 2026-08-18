@@ -111,6 +111,29 @@ def load_aligned(ccf_root: str, network: str, station: str):
     return data, common
 
 
+def _codameter_is_physical(version: str) -> bool:
+    """True when run_pipeline returns physical dv/v rather than the stretch factor.
+
+    Tolerant of non-PEP-440 versions (a source checkout can report
+    ``0+unknown``): an unparseable version defaults to the modern convention,
+    which is what pyproject pins.
+    """
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        v = Version(version)
+    except InvalidVersion:
+        logger.warning("unparseable codameter version %r; assuming >= 0.4", version)
+        return True
+    # setuptools_scm's fallback for a checkout with no tag is "0+unknown",
+    # which IS valid PEP 440 and sorts below 0.4 -- taking it at face value
+    # would silently negate dv/v. A bare 0 release carries no information.
+    if v.release == (0,):
+        logger.warning("uninformative codameter version %r; assuming >= 0.4", version)
+        return True
+    return v >= Version("0.4")
+
+
 def station_dvv(
     data: dict,
     days: np.ndarray,
@@ -122,9 +145,7 @@ def station_dvv(
     from codameter import __version__ as _codameter_version
     from codameter.deviations import run_pipeline
 
-    _CODAMETER_PHYSICAL = tuple(
-        int(x) for x in _codameter_version.split(".")[:2]
-    ) >= (0, 4)
+    _CODAMETER_PHYSICAL = _codameter_is_physical(_codameter_version)
     from codameter.uq_measurement import processing_ensemble, weaver_stretching_error
 
     cfg, eps = dvv_config(use_case, band)
@@ -169,6 +190,11 @@ def station_dvv(
                     for c in cc
                 ]
             )
+            # Fold the sigma mask into `valid`. A NaN sigma alone does not
+            # remove an epoch: both combiners weight on `valid`, so a masked
+            # epoch kept its CC^2 weight, contributed its dv/v to the mean,
+            # and dropped only out of the sigma numerator.
+            valid = np.asarray(valid) & np.isfinite(sigma)
             per_pair[pair] = {"dvv": dvv, "cc": cc, "sigma": sigma, "valid": valid}
         m_dvv, m_cc, m_sig = combine(per_pair, method=combine_method)
         members[label] = m_dvv

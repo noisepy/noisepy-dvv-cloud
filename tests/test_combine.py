@@ -44,6 +44,41 @@ def test_inverse_variance_weighting_and_error():
     np.testing.assert_allclose(sig, [1.0 / np.sqrt(125.0)])
 
 
+def test_anticorrelated_pair_gets_no_weight():
+    """cc <= 0 must not contribute: cc**2 makes a negative CC look plausible."""
+    per_pair = {
+        "EN": _pair([1.0], [1.0]),
+        "EZ": _pair([0.0], [0.5]),
+        # same |cc| as EZ, so a cc**2 weight would pull the mean hard
+        "NZ": {"dvv": np.array([-100.0]), "cc": np.array([-0.5]),
+               "sigma": np.array([np.nan]), "valid": np.array([True])},
+    }
+    dvv, _, _ = hobiger_combine(per_pair)
+    np.testing.assert_allclose(dvv, [0.8])  # identical to the two-pair result
+
+
+def test_masked_sigma_does_not_bias_error_low():
+    """A NaN sigma must drop its weight from the denominator, not just the sum.
+
+    np.nansum kept the masked pair's weight while dropping its value, which
+    reported dvv_err_within well below any contributing pair's sigma.
+
+    NZ carries valid=True on purpose: that is the state the Weaver CC-domain
+    guard produced before the mask was folded into `valid`, and it is the only
+    combination that exposes the bias.
+    """
+    per_pair = {
+        "EN": {"dvv": np.array([1.0]), "cc": np.array([0.9]),
+               "sigma": np.array([0.10]), "valid": np.array([True])},
+        "EZ": {"dvv": np.array([1.0]), "cc": np.array([0.9]),
+               "sigma": np.array([0.10]), "valid": np.array([True])},
+        "NZ": {"dvv": np.array([1.0]), "cc": np.array([0.9]),
+               "sigma": np.array([np.nan]), "valid": np.array([True])},
+    }
+    _, _, sig = hobiger_combine(per_pair)
+    np.testing.assert_allclose(sig, [0.10])  # not 0.0667 (= 2/3 of it)
+
+
 def test_all_invalid_epoch_is_nan():
     per_pair = {
         "EN": _pair([1.0, np.nan], [0.9, np.nan], valid=np.array([True, False])),

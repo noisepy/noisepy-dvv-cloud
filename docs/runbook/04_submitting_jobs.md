@@ -42,9 +42,10 @@ pixi run -e dvv python scripts/compare_cd2022.py \
   --legacy ~/Dropbox/RESEARCH_GROUP/TIM_MARINE_PROJEcTS/data/DVV-90-DAY-COMP/2.0-4.0/CI.LJR.arrow
 ```
 
-Pass: correlation > 0.9, |mean offset| < 0.05 %. Differences are expected (NoisePy vs
-SeisNoise conventions, ensemble mean vs single config) but must be small and
-explainable.
+Pass: **correlation > 0.9**. The mean offset is printed but not gated — the two
+products use different reference epochs, so a constant offset is bookkeeping, not
+error. Differences are expected (NoisePy vs SeisNoise conventions, ensemble mean vs
+single config) but must be small and explainable.
 
 Two constraints on the comparison run:
 
