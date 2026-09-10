@@ -99,6 +99,12 @@ pixi run -e correlate python -m noisepy_dvv_cloud.submit_helper dvv \
   --start 2018.001 --end 2020.001 --combine hobiger
 ```
 
+No `--use-case` here on purpose: the no-use-case fallback in `dvv.py` is the
+Clements-Denolle-like config (stretching, fixed reference, 90-day trailing
+stack), which is what Gate 1 is comparing against. Passing a use case would
+swap in a window calibrated for a different target process and make the
+comparison less like-for-like.
+
 Then compare, per station:
 
 ```bash

@@ -42,17 +42,44 @@ def dvv_config(use_case: str | None, band: tuple[float, float]) -> tuple[dict, f
         eps = eps_max(use_case)
     else:
         # Clements-Denolle-like fallback: stretching, fixed reference,
-        # 90-day trailing stack, coda 0..20/fmin seconds
+        # 90-day trailing stack, coda 2/fmin..20/fmin seconds.
+        #
+        # The lower bound is a GUARD, not a tuned choice. It used to be 0.0,
+        # which put the window on the zero-lag peak of a single-station
+        # correlation rather than on its coda, and made the Weaver coherence
+        # floor undefined -- codameter requires 0 < t1 < t2, so four of the
+        # five ensemble members raised before producing anything. Two periods
+        # at the low corner clears the zero-lag artifact and scales with the
+        # band. Pass --use-case for a window that is actually calibrated for
+        # the target process.
         cfg = {
             "estimator": "stretching (TS)",
             "band": band,
-            "window": (0.0, 20.0 / band[0]),
+            "window": (2.0 / band[0], 20.0 / band[0]),
             "stack": 90,
             "reference": "fixed",
             "gate": True,
         }
         eps = 0.05
+    _check_window(cfg, use_case)
     return cfg, eps
+
+
+def _check_window(cfg: dict, use_case: str | None) -> None:
+    """Fail at config time, not deep inside the per-epoch sigma loop.
+
+    The Weaver floor requires 0 < t1 < t2. Reaching it with a bad window
+    raises once per epoch per pair per member, after the correlate stage has
+    already been paid for, and the message says nothing about where the window
+    came from.
+    """
+    t1, t2 = cfg["window"]
+    if not 0 < t1 < t2:
+        source = f"use case {use_case!r}" if use_case else "the no-use-case fallback"
+        raise ValueError(
+            f"coda window {(t1, t2)} from {source} is not 0 < t1 < t2; "
+            "the Weaver coherence floor is undefined there"
+        )
 
 
 def ensemble_configs(cfg: dict) -> dict[str, dict]:
