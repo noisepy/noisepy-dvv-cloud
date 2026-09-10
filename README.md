@@ -56,19 +56,29 @@ flowchart LR
 ## Quickstart (local smoke test)
 
 The two stages need **separate environments** (`noisepy-seis` pins `pandas<2`,
-codameter needs `pandas>=2`) — install `.[correlate]` and `.[dvv]` in different venvs,
-or use the two published containers (see `docs/runbook/02_container.md`).
+codameter needs `pandas>=2`). [pixi](https://pixi.sh) manages both from this repo's
+`pyproject.toml` — `pixi install` reads the lockfile, so both stages are reproducible
+without hand-managed venvs.
 
 ```bash
-pip install -e ".[correlate,dev]"   # env 1
-python -m noisepy_dvv_cloud correlate \
+pixi install -e correlate && pixi install -e dvv
+pixi run verify-correlate   # -> correlate ok | pandas 1.5.3
+pixi run verify-dvv         # -> dvv ok | codameter 0.4.0 | pandas 2.3.3
+
+pixi run -e correlate python -m noisepy_dvv_cloud correlate \
     --stations CI.LJR. --start 2023.001 --end 2023.010 \
     --output s3://YOUR_BUCKET/smoke/ccf/
-pip install -e ".[dvv,dev]"         # env 2
-python -m noisepy_dvv_cloud dvv \
+pixi run -e dvv python -m noisepy_dvv_cloud dvv \
     --stations CI.LJR. --ccf s3://YOUR_BUCKET/smoke/ccf/ \
     --output s3://YOUR_BUCKET/smoke/dvv/ --use-case groundwater
 ```
+
+A third environment, `ops`, carries `awscli` alone. It is deliberately separate:
+conda-forge's `awscli` pulls `ruamel-yaml 0.19`, and `noisepy-seis` pins
+`pydantic-yaml==1.0`, which caps `ruamel-yaml <0.18` — putting them together makes the
+correlate solve unsatisfiable.
+
+The containers still use `pip` (see `docker/`); pixi is the local-development path.
 
 For the real campaign, follow [docs/runbook/README.md](docs/runbook/README.md).
 

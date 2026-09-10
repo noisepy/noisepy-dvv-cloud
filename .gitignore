@@ -9,3 +9,9 @@ submissions/
 /tmp/
 .pytest_cache/
 .ruff_cache/
+.pixi/
+
+# Filled-in copies of the config skeletons: these carry real role ARNs,
+# subnet and security-group IDs. The tracked configs/*.yaml stay templates.
+configs/*.local.yaml
+configs/*.local.json

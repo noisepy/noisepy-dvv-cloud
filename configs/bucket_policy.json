@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "OPTIONAL. Not required for access -- every IAM user in account ACCOUNT_ID is",
+    "in the `scoped` group, which carries AmazonS3FullAccess, so niyiyu and the other",
+    "29 group members can already read and write this bucket the moment it exists.",
+    "Bucket policies and IAM policies are additive for Allow, so an Allow statement",
+    "here would grant nothing new.",
+    "",
+    "What this policy DOES buy: a delete guard. 30 users hold AmazonS3FullAccess, and",
+    "a campaign's Parquet products are expensive to regenerate. The Deny below is the",
+    "only thing that actually constrains them, because an explicit Deny beats any",
+    "Allow, IAM-side or bucket-side.",
+    "",
+    "Apply with:",
+    "  aws s3api put-bucket-policy --bucket BUCKET --policy file://configs/bucket_policy.json",
+    "Remove with:",
+    "  aws s3api delete-bucket-policy --bucket BUCKET",
+    "Replace BUCKET throughout before applying, and strip these _comment keys --",
+    "S3 rejects unknown top-level fields."
+  ],
+  "Version": "2012-10-17",
+  "Id": "dvvcloud2026-delete-guard",
+  "Statement": [
+    {
+      "Sid": "DenyProductDeletionExceptOwners",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion"
+      ],
+      "Resource": [
+        "arn:aws:s3:::BUCKET/ccf/*",
+        "arn:aws:s3:::BUCKET/dvv/*"
+      ],
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::ACCOUNT_ID:user/mdenolle",
+            "arn:aws:iam::ACCOUNT_ID:user/niyiyu"
+          ]
+        }
+      }
+    }
+  ]
+}

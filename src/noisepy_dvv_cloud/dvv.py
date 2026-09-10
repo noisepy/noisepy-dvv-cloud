@@ -111,6 +111,29 @@ def load_aligned(ccf_root: str, network: str, station: str):
     return data, common
 
 
+def _codameter_is_physical(version: str) -> bool:
+    """True when run_pipeline returns physical dv/v rather than the stretch factor.
+
+    Tolerant of non-PEP-440 versions (a source checkout can report
+    ``0+unknown``): an unparseable version defaults to the modern convention,
+    which is what pyproject pins.
+    """
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        v = Version(version)
+    except InvalidVersion:
+        logger.warning("unparseable codameter version %r; assuming >= 0.4", version)
+        return True
+    # setuptools_scm's fallback for a checkout with no tag is "0+unknown",
+    # which IS valid PEP 440 and sorts below 0.4 -- taking it at face value
+    # would silently negate dv/v. A bare 0 release carries no information.
+    if v.release == (0,):
+        logger.warning("uninformative codameter version %r; assuming >= 0.4", version)
+        return True
+    return v >= Version("0.4")
+
+
 def station_dvv(
     data: dict,
     days: np.ndarray,
@@ -119,7 +142,10 @@ def station_dvv(
     combine_method: str,
 ) -> pd.DataFrame:
     """Ensemble dv/v for one station and band, combined across EN, EZ, NZ."""
+    from codameter import __version__ as _codameter_version
     from codameter.deviations import run_pipeline
+
+    _CODAMETER_PHYSICAL = _codameter_is_physical(_codameter_version)
     from codameter.uq_measurement import processing_ensemble, weaver_stretching_error
 
     cfg, eps = dvv_config(use_case, band)
@@ -143,14 +169,32 @@ def station_dvv(
             # non-stretching estimators / inversion reference return NaN CC;
             # keep those epochs usable with the same nominal value
             cc = np.where(np.isfinite(cc), cc, np.where(valid, 0.8, np.nan))
+            # SIGN CONVENTION (Gate 1 finding, 2026-08-08): codameter
+            # run_pipeline < 0.4 returned the stretch factor
+            # epsilon = -dv/v; codameter 0.4+ returns physical dv/v
+            # natively (Denolle-Lab/codameter#36). Negate only on the old
+            # convention so the stored column is always physical dv/v.
+            if not _CODAMETER_PHYSICAL:
+                dvv = -np.asarray(dvv)
+            # real data produces epochs with cc <= 0 (glitch days,
+            # anticorrelated coda); codameter's Weaver error correctly
+            # requires cc in (0, 1] — mask those epochs instead of dying
+            # (found on the Gate 1 full-year run, 2019 CI.RXH)
             sigma = np.array(
                 [
-                    weaver_stretching_error(c, f_center, vcfg["window"][0], vcfg["window"][1])
-                    if np.isfinite(c)
+                    weaver_stretching_error(
+                        min(c, 1.0), f_center, vcfg["window"][0], vcfg["window"][1]
+                    )
+                    if np.isfinite(c) and 0.0 < c <= 1.0 + 1e-12
                     else np.nan
                     for c in cc
                 ]
             )
+            # Fold the sigma mask into `valid`. A NaN sigma alone does not
+            # remove an epoch: both combiners weight on `valid`, so a masked
+            # epoch kept its CC^2 weight, contributed its dv/v to the mean,
+            # and dropped only out of the sigma numerator.
+            valid = np.asarray(valid) & np.isfinite(sigma)
             per_pair[pair] = {"dvv": dvv, "cc": cc, "sigma": sigma, "valid": valid}
         m_dvv, m_cc, m_sig = combine(per_pair, method=combine_method)
         members[label] = m_dvv

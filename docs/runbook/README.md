@@ -24,6 +24,9 @@ Two design rules for any campaign (inherited from QuakeScope):
 
 ## Phases
 
+Start at [00_unblock_plan.md](00_unblock_plan.md) — it records what was actually
+blocking the gates as of 2026-08-17 and which phases below are already satisfied.
+
 - [ ] **A. AWS basics** — account, CLI, billing guardrail → [01_aws_setup.md](01_aws_setup.md) (½ day first time)
 - [ ] **B. Container** — push to main, GH Action builds `ghcr.io/noisepy/noisepy-dvv-cloud`, local smoke test → [02_container.md](02_container.md) (1 h)
 - [ ] **C. Batch objects** — output bucket, IAM roles, compute env, queue, 2 job defs → [03_batch_setup.md](03_batch_setup.md) (½ day)

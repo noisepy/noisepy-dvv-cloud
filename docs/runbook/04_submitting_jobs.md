@@ -37,14 +37,22 @@ California run, compare the new dv/v against the archived Arrow products (readab
 directly from Python — no Julia needed):
 
 ```bash
-python scripts/compare_cd2022.py \
+pixi run -e dvv python scripts/compare_cd2022.py \
   --new s3://YOUR_BUCKET/dvv/v1/band=2.0-4.0/CI.LJR.parquet \
-  --legacy ~/Dropbox/RESEARCH_GROUP/TIM_MARINE_PROJEcTS/Clements-Denolle-2022/data/DVV-90-DAY-COMP/2.0-4.0/CI.LJR.arrow
+  --legacy ~/Dropbox/RESEARCH_GROUP/TIM_MARINE_PROJEcTS/data/DVV-90-DAY-COMP/2.0-4.0/CI.LJR.arrow
 ```
 
-Pass: correlation > 0.9, |mean offset| < 0.05 %. Differences are expected (NoisePy vs
-SeisNoise conventions, ensemble mean vs single config) but must be small and
-explainable.
+Pass: **correlation > 0.9**. The mean offset is printed but not gated — the two
+products use different reference epochs, so a constant offset is bookkeeping, not
+error. Differences are expected (NoisePy vs SeisNoise conventions, ensemble mean vs
+single config) but must be small and explainable.
+
+Two constraints on the comparison run:
+
+- **Band.** Only `2.0-4.0` is archived, so Gate 1 is a single-band check.
+- **Span.** `compare_cd2022.py` drops a 150-day reference burn-in and compares a 90-day
+  trailing stack, so ten days of correlations produce nothing to compare. Give it
+  **two years**. That is a Batch run, not a laptop run — do the AWS setup first.
 
 **Gate 2 — cost.** Write the observed per-station-day cost into 01_aws_setup.md.
 
