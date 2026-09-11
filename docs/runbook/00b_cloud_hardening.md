@@ -200,6 +200,34 @@ fleet stops growing rather than stampeding.
 QuakeScope also uses **pixi** (`pixi.toml`, `pixi.lock`, `PIXI_SETUP.md`),
 which independently matches the environment work already merged here.
 
+### The agent for this work
+
+[`.claude/agents/aws-cloud-architect.md`](../../.claude/agents/aws-cloud-architect.md)
+is a project-level agent scoped to exactly these decisions — Batch role splits,
+S3 prefix/lifecycle design, container leanness, and cost-per-throughput review.
+Its Batch/IAM section already encodes most of §2 and §3 above independently:
+never attach broad managed policies to the execution role because it is on every
+task, no wildcard `Resource: "*"` in job roles, `iam simulate-principal-policy`
+before a wide rollout, and an explicit instruction to refuse "just give the job
+role admin so it works". One of its trigger examples is verbatim the situation
+this project is in:
+
+> "I just gave the Batch job role AmazonS3FullAccess so I could stop debugging
+> permissions errors."
+
+Two of its rules are **not** yet reflected anywhere in this runbook and should be
+checked during the port:
+
+- **VPC endpoints** (Gateway for S3; Interface for ECR/CloudWatch/STS) for Batch
+  compute environments in private subnets. NAT Gateway data-processing charges at
+  fan-out scale "can silently exceed the compute cost itself". Both job
+  definitions set `assignPublicIp: ENABLED`, and `compute_environment.yaml` still
+  has `subnets: ['']` unfilled — so whether tasks land in public or private
+  subnets is an open decision, and it should be made deliberately rather than by
+  pasting in whatever `describe-subnets` returns first.
+- **Permission boundaries** on job roles where several pipelines share a compute
+  environment — which is the case on this account.
+
 ---
 
 ## 5. Open decisions

@@ -21,9 +21,8 @@ Two design rules for any campaign (inherited from QuakeScope):
    fleet decays to nothing while the queue still has work (QuakeScope measured
    37–53% reclaim on this account). A Spot governor outside Batch is required for
    long campaigns — [00b_cloud_hardening.md](00b_cloud_hardening.md) §4.
-   Fargate Spot kills tasks; the retry strategy resubmits them
-   and Parquet shard files are content-hash-named, so a re-run of the identical
-   submit command is always safe.
+   Parquet shard files are content-hash-named, so a re-run of the identical submit
+   command is always safe.
 2. **Smoke test before scale.** One station, ten days, through both stages, before any
    command that submits more than 10 jobs.
 
