@@ -9,7 +9,12 @@ cross-region transfer risk. Nothing in this repo hardcodes the region except
 1. Sign in, create an access key: **Console → IAM → Users → your user → Security
    credentials → Create access key** (CLI use case).
 2. `aws configure` with that key; set default region `us-west-2`.
-3. Billing guardrail: **Console → Billing → Budgets → Create budget**, monthly cost
+3. Billing guardrail: **NOT POSSIBLE ON THIS ACCOUNT.** `budgets:ViewBudget` is
+   explicitly denied by service control policy `p-q1ngvul9` (verified 2026-09-10),
+   as is Cost Explorer — this is a CloudBank account billed through Strategic
+   Blue. There is currently no billing guardrail; see
+   [00b_cloud_hardening.md](00b_cloud_hardening.md) §1.2 for the replacement.
+   The original instruction, which fails: **Console → Billing → Budgets → Create budget**, monthly cost
    budget with an alert at your comfort level. Fargate Spot for this workload runs
    roughly $0.01–0.05 per station-day of correlation (verify on the smoke test —
    record the number here).
