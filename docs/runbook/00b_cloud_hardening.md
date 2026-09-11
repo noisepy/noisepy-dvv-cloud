@@ -230,6 +230,62 @@ checked during the port:
 
 ---
 
+## 4b. Credential leak audit — 2026-09-11
+
+Run again after any change to CI, Docker, or the ignore files. Method matters:
+history was scanned by materialising **every blob on every ref**, not by reading
+the current tree.
+
+| Surface | Method | Result |
+|---|---|---|
+| Tracked files | `detect-secrets` 1.5.0, all tracked paths | **0 findings** |
+| Full history | `detect-secrets` over all 21 commits on every ref (`git archive` per commit) | **0 findings** |
+| Full history | regex sweep for `AKIA`/`ASIA`/`A3T*`, PEM headers, `aws_secret_access_key`, `xox*`, `ghp_`, `github_pat_`, `sk-`, JWTs | **0 findings** |
+| Sensitive filenames | every path ever added on any branch, filtered for `.env`/`.pem`/`.key`/`credentials`/`id_rsa`/`.tfstate` | **none ever committed** |
+| Account identifiers | `073795725844` / `897729121516` across all history | **never committed** — docs use `ACCOUNT_ID` |
+| GitHub Actions | `.github/workflows/docker.yml` | only `secrets.GITHUB_TOKEN`; `permissions:` least-privilege (`contents: read`, `packages: write`); **no AWS credentials, no OIDC role** |
+| Repo settings | `actions/secrets`, `actions/variables` | **0 secrets, 0 variables** — nothing to leak |
+| Container images | both Dockerfiles | no `ENV`/`ARG` secrets; explicit `COPY pyproject.toml README.md` + `COPY src`, never `COPY . .` |
+| Application code | `os.environ` / logging of env | only `DVV_JOB_ROLE_ARN` / `DVV_EXECUTION_ROLE_ARN` reads; nothing dumps the environment |
+| `pixi.lock` | embedded `user:pass@` URLs, token/secret strings | **clean** — public conda-forge and PyPI only |
+| Repo visibility | — | PRIVATE |
+
+### The gap that was found, and fixed
+
+Everything above was already clean. The actual risk was **forward-looking**:
+`.gitignore` was 17 lines and covered build artefacts only. `.env`, `*.pem`,
+`*.key`, `credentials*`, `id_rsa*`, `.aws/`, `.netrc`, `*.tfstate` and `*.log`
+were **all stageable**. Nothing stopped a dropped key from being committed,
+and `git add -A` is used routinely here.
+
+For comparison, QuakeScope's `.gitignore` is 188 lines and its security audit
+specifically credits it for excluding `*.pem`, `.env` and `*.log`.
+
+Fixed in this PR:
+
+- **`.gitignore`** — credential patterns added, with `!.env.example` kept
+  stageable. Verified: all of `.env`, `.env.local`, `credentials.json`,
+  `aws_credentials`, `id_rsa`, `key.pem`, `.aws/credentials`, `secrets.yaml`,
+  `run.log`, `.netrc`, `terraform.tfstate` are now ignored, and
+  `git ls-files -i -c` confirms **no tracked file was shadowed**.
+- **`.dockerignore`** — added. Nothing sensitive reaches an image today because
+  the Dockerfiles COPY explicit paths, but a later switch to `COPY . .` would
+  have swept in local AWS config and campaign outputs. The three COPY paths
+  (`pyproject.toml`, `README.md`, `src`) are confirmed still included.
+
+### Not covered, and worth knowing
+
+- **`ghcr.io` package visibility could not be read** — the local `gh` token
+  lacks `read:packages`. A container package can be public while its repo is
+  private. The images hold only `src/` plus dependencies, so the exposure would
+  be source code rather than credentials, but it should be confirmed by hand.
+- **`*.log` is now ignored**, which is a tradeoff: tracebacks can carry
+  presigned URLs and account ids, but an intentionally committed log would need
+  `git add -f`.
+- **No automated scanning in CI.** This audit is a point-in-time snapshot run
+  by hand. A `detect-secrets` or `gitleaks` pre-commit hook, or a scan job on
+  `pull_request`, is the way to make it continuous — not yet done.
+
 ## 5. Open decisions
 
 Neither should be guessed; both were put to the user and are unanswered.

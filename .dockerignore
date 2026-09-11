@@ -1,0 +1,47 @@
+# Both Dockerfiles COPY explicit paths (pyproject.toml, README.md, src/), not
+# `COPY . .`, so nothing below reaches an image today. This file exists so that
+# a later switch to a broad COPY cannot quietly sweep credential material,
+# local AWS config or campaign outputs into a published layer.
+
+.git
+.github
+.pixi
+.venv
+__pycache__
+*.egg-info
+.pytest_cache
+.ruff_cache
+.claude
+
+# credential material -- mirrors .gitignore
+.env
+.env.*
+.envrc
+.aws
+credentials
+credentials.*
+aws_credentials*
+*.pem
+*.key
+*.p12
+*.pfx
+*.ppk
+*.jks
+*.keytab
+id_rsa*
+id_ecdsa*
+id_ed25519*
+.netrc
+.pypirc
+*.log
+
+# filled-in deployment configs: real role ARNs, subnet and SG ids
+configs/*.local.yaml
+configs/*.local.json
+
+# campaign data and audit trails
+smoke_out
+submissions
+*.parquet
+docs
+tests
