@@ -55,6 +55,9 @@ Two constraints on the comparison run:
   **two years**. That is a Batch run, not a laptop run — do the AWS setup first.
 
 **Gate 2 — cost.** Write the observed per-station-day cost into 01_aws_setup.md.
+The `aws ce` route does not work here: Cost Explorer and Budgets are both denied
+by SCP `p-q1ngvul9`. Real figures come from the CloudBank portal, recorded by
+hand — see [00b_cloud_hardening.md](00b_cloud_hardening.md) §1.2.
 
 Also run the dvv smoke test twice, `--combine hobiger` and `--combine
 inverse_variance`, and record which you're using for the campaign — the choice is part

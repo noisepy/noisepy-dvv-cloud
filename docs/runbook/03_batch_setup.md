@@ -17,6 +17,12 @@ Put the name in `src/noisepy_dvv_cloud/parameters.py` (`OUTPUT_BUCKET`).
 
 ## IAM roles
 
+> **Superseded — read [00b_cloud_hardening.md](00b_cloud_hardening.md) §1.1 first.**
+> Reusing this role means running the campaign under `AmazonS3FullAccess` on an
+> account with nine buckets, and using one role as both job and execution role.
+> QuakeScope already undid both on this same account. The section below is kept
+> only as the record of what exists today.
+
 **Already done — reuse `NoisePyBatchRole`.** Account ACCOUNT_ID has
 `arn:aws:iam::ACCOUNT_ID:role/NoisePyBatchRole`, which already carries everything
 both roles need:
