@@ -1,0 +1,36 @@
+# `pre-commit` has been a declared dev dependency since the scaffold with no
+# config file, so `pre-commit install` did nothing. This is that config.
+#
+#     pixi run -e dvv pre-commit install      # once per clone
+#     pixi run -e dvv pre-commit run -a       # check everything now
+#
+# The secret hook is the one that matters: this repo uses `git add -A`
+# routinely, and .gitignore can only stop files it knows the shape of.
+repos:
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+        # pixi.lock is 3k lines of hashes; it scans clean but re-auditing it on
+        # every commit is noise. CI still covers it.
+        exclude: ^pixi\.lock$
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: detect-private-key
+      - id: detect-aws-credentials
+        args: ["--allow-missing-credentials"]
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-json
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
