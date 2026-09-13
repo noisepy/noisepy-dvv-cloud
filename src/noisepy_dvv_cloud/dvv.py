@@ -173,10 +173,9 @@ def station_dvv(
     from codameter.deviations import run_pipeline
 
     _CODAMETER_PHYSICAL = _codameter_is_physical(_codameter_version)
-    from codameter.uq_measurement import processing_ensemble, weaver_stretching_error
+    from codameter.uq_measurement import processing_ensemble, weaver_stretching_error_band
 
     cfg, eps = dvv_config(use_case, band)
-    f_center = float(np.sqrt(band[0] * band[1]))
 
     members: dict[str, np.ndarray] = {}
     within: dict[str, np.ndarray] = {}
@@ -207,10 +206,15 @@ def station_dvv(
             # anticorrelated coda); codameter's Weaver error correctly
             # requires cc in (0, 1] — mask those epochs instead of dying
             # (found on the Gate 1 full-year run, 2019 CI.RXH)
+            # codameter >= 0.5: the Weaver floor needs the band width (spectral
+            # timescale T) and uses eq. 20's prefactor; the band form takes the
+            # arithmetic centre frequency. Earlier products (codameter 0.4)
+            # used a 4-argument call with a geometric-mean centre and are
+            # rescaled by codameter's scripts/correct_gate1_within_error.py.
             sigma = np.array(
                 [
-                    weaver_stretching_error(
-                        min(c, 1.0), f_center, vcfg["window"][0], vcfg["window"][1]
+                    weaver_stretching_error_band(
+                        min(c, 1.0), band, vcfg["window"][0], vcfg["window"][1]
                     )
                     if np.isfinite(c) and 0.0 < c <= 1.0 + 1e-12
                     else np.nan
