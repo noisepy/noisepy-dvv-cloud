@@ -6,8 +6,6 @@ this module in sync — the schemas are the public contract of this pipeline.
 
 from __future__ import annotations
 
-import datetime
-
 import numpy as np
 import pandas as pd
 import pyarrow as pa

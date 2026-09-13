@@ -273,18 +273,78 @@ Fixed in this PR:
   have swept in local AWS config and campaign outputs. The three COPY paths
   (`pyproject.toml`, `README.md`, `src`) are confirmed still included.
 
-### Not covered, and worth knowing
+### Automated, 2026-09-12
 
-- **`ghcr.io` package visibility could not be read** — the local `gh` token
-  lacks `read:packages`. A container package can be public while its repo is
-  private. The images hold only `src/` plus dependencies, so the exposure would
-  be source code rather than credentials, but it should be confirmed by hand.
-- **`*.log` is now ignored**, which is a tradeoff: tracebacks can carry
-  presigned URLs and account ids, but an intentionally committed log would need
-  `git add -f`.
-- **No automated scanning in CI.** This audit is a point-in-time snapshot run
-  by hand. A `detect-secrets` or `gitleaks` pre-commit hook, or a scan job on
-  `pull_request`, is the way to make it continuous — not yet done.
+The hand-run audit above is a snapshot, and a snapshot is not a control. It is
+now continuous:
+
+- **`.github/workflows/security.yml`** on every push to `main`, every PR, and
+  weekly. Two scanners, because they cover different things: `detect-secrets`
+  (27 rule plugins + entropy) over tracked files, baseline-diffed so a
+  known-safe string does not fail every future PR; and `gitleaks` over **full
+  history** on the pushed ref, which catches a secret that was committed and
+  later removed — something a working-tree scan structurally cannot see.
+  `fetch-depth: 0` is required for the second one to mean anything.
+  Both are free: gitleaks is fetched as a pinned release binary rather than via
+  `gitleaks-action`, which wants a `GITLEAKS_LICENSE` for organisation repos.
+- **`.pre-commit-config.yaml`** — `pre-commit` had been a declared dev
+  dependency since the scaffold with no config file, so `pre-commit install`
+  did nothing. Now `detect-secrets`, `detect-private-key`,
+  `detect-aws-credentials`, large-file and merge-conflict guards, and `ruff`.
+  Run `pixi run -e dvv pre-commit install` once per clone.
+- **`.secrets.baseline`** — 27 plugins, 0 findings at creation.
+
+Verified rather than assumed: the hook exits 0 on the repo as it stands, and a
+planted `aws_secret_access_key` is caught by three separate detectors and
+blocked with a nonzero exit.
+
+**Remaining tradeoff:** `*.log` is gitignored, so an intentionally committed
+log needs `git add -f`. That is the right default — tracebacks carry presigned
+URLs and account ids.
+
+### The image must be public — verified launch blocker
+
+`ghcr.io/noisepy/noisepy-dvv-cloud` is **private**, and both tags exist
+(`correlate-latest`, `dvv-latest`, built 2026-09-10). AWS Batch on Fargate
+pulls with the ECS execution role, which has no ghcr identity, so a campaign
+would fail at task start with `CannotPullContainerError` before any of our code
+runs.
+
+ghcr is unambiguous about this, which is what makes it checkable without any
+credentials:
+
+| package | `GET ghcr.io/token?scope=repository:<repo>:pull` |
+|---|---|
+| public | `200` + `{"token": ...}` |
+| private | `401` + `{"errors":[{"code":"UNAUTHORIZED"}]}` |
+
+[`scripts/check_image_public.py`](../../scripts/check_image_public.py) does
+exactly that, stdlib only, and is wired into the `security` workflow as the
+`image-pullable` job — informational on PRs, a real failure on `main`, where
+the published image is what a campaign would launch. Confirmed against a
+**positive control**: `seisscoped/quakescope` returns `HTTP 200 PUBLIC`, so the
+check can distinguish, not just fail.
+
+Two ways forward. This repo takes the first, as QuakeScope does — its
+`register_jobdef.py` resolves manifests through the same anonymous token
+endpoint, which only succeeds for a public package:
+
+1. **Make the ghcr package public.** No credentials anywhere, nothing to
+   rotate. **This publishes `src/`, `pyproject.toml` and `README.md` to anyone**
+   — the repo is currently private, so this is a disclosure decision, not just
+   a config toggle. The project is MIT-licensed and framed as a successor to a
+   published paper, so it is very likely the intended end state; it should still
+   be made deliberately.
+2. **Keep it private** and add `repositoryCredentials` to both job definitions
+   pointing at a Secrets Manager secret holding a ghcr PAT, granting
+   `secretsmanager:GetSecretValue` to the **execution** role — not the job role.
+   More moving parts, a credential to rotate, and it walks straight into the
+   trap in §1.1.
+
+Requires package admin. A `gh` token with only `repo` scope cannot change it
+through the API; the local token's scopes are
+`admin:public_key, gist, read:org, repo`, so this is a web-UI action:
+**GitHub → Packages → noisepy-dvv-cloud → Package settings → Change visibility.**
 
 ## 5. Open decisions
 

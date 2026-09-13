@@ -1,0 +1,19 @@
+# gitleaks configuration.
+#
+# Only one allowlist, and it exists because the two scanners collide:
+# `.secrets.baseline` stores a SHA1 `hashed_secret` for every finding
+# detect-secrets has ever seen, and gitleaks reads those 40-char hex strings as
+# high-entropy generic API keys. They are one-way hashes of strings that were
+# already judged not to be secrets -- flagging them is a false positive by
+# construction, and it fires on every commit that touches the baseline.
+#
+# The tradeoff, stated plainly: a real secret pasted into .secrets.baseline
+# would not be caught by gitleaks. detect-secrets still scans that file, the
+# baseline is machine-generated, and a credential has no reason to appear in
+# it -- so this is the narrowest fix that does not disable a whole rule.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "detect-secrets baseline holds SHA1 hashes of findings, not secrets"
+paths = ['''\.secrets\.baseline$''']
