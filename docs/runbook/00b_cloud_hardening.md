@@ -438,23 +438,31 @@ source): a pure per-band constant, independent of `cc` — **2.16x** at 1–2 Hz
 correction changes **only** the error columns, never dv/v. Gate 1 gates on
 `r > 0.9` of the dv/v series and is unaffected either way.
 
-**AWS.** Nothing for this project exists on the account yet — verified by
-`scripts/preflight.py` on 2026-09-22, which reports FAIL on the compute
-environment, the queue, both job definitions, the two roles and the bucket, and
-PASS on the image and on repo hygiene. The only Batch objects on the account
-are the legacy `niyiyu-noisepy-scedc` ones. `configs/` still has six
-`[REQUIRED]` placeholders across three files (subnets, security group, and the
-role ARN four times). Fill `*.local.yaml` copies — the tracked skeletons stay
-templates, and `.gitignore` covers that suffix.
+**AWS — created 2026-09-22, `preflight.py` exit 0.** Everything Phase 1 calls
+for now exists:
 
-The tooling to create all of it now exists and is checked in. What remains is
-running `--apply` three times, which is the first change this project makes to
-the account:
+| object | name | note |
+|---|---|---|
+| products bucket | `denolle-dvv-cloud-2026` | us-west-2; versioning, all four public-access blocks, SSE-S3, lifecycle `dvvcloud-version-hygiene` |
+| job role | `DvvCloudBatchRole` | inline `DvvCloudProductsS3`, one bucket, no delete |
+| execution role | `DvvCloudExecutionRole` | `AmazonECSTaskExecutionRolePolicy` only |
+| compute environment | `dvvcloud2026_env` | FARGATE_SPOT, ENABLED/VALID, maxvCpus 256 |
+| job queue | `dvvcloud2026_queue` | ENABLED/VALID |
+| job definitions | `dvvcloud2026_correlate:1`, `dvvcloud2026_dvv:1` | both on the `DvvCloud*` role pair |
 
-```bash
-export DVV_OUTPUT_BUCKET=<name>
-pixi run -e ops python scripts/create_bucket.py --apply
-pixi run -e ops python scripts/scope_iam.py --apply
-# fill configs/*.local.yaml, register the Batch objects, then:
-pixi run -e ops python scripts/preflight.py
-```
+Networking: the four public subnets of the default VPC (`us-west-2a`–`d`,
+`MapPublicIpOnLaunch: true`) and the default security group, which allows all
+egress and no ingress from outside itself. The filled values live in
+`configs/*.local.yaml`, which `.gitignore` covers; the six `[REQUIRED]`
+placeholders in the tracked YAMLs are untouched, and `preflight.py` checks that
+they stay that way.
+
+**The account's `aws` binary is CLI 2.0.34 (2020) and rejects
+`--no-cli-pager`.** Use `pixi run -e ops aws ...`, which is 2.36.24. That is
+the second reason the `ops` environment exists, alongside the ruamel-yaml pin
+conflict.
+
+**Still outstanding:** §3 step 6. Simulation is a model of the IAM evaluator;
+the evidence that the model matched reality is one real job that starts, reads,
+writes an object and exits. That is Phase 2, the micro-smoke, and it has not
+been run.

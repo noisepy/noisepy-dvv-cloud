@@ -36,7 +36,15 @@ Prefix every command below with `pixi run -e correlate` or `pixi run -e dvv`.
 it below 0.18, and the correlate solve fails outright if they share an environment. If
 you already have `aws` on `PATH`, ignore `ops` entirely.
 
-## Phase 1 — AWS objects
+## Phase 1 — AWS objects (done 2026-09-22)
+
+All four steps below have been run; `scripts/preflight.py` exits 0. The object
+names and the networking actually used are recorded in
+[00b_cloud_hardening.md](00b_cloud_hardening.md) §6. Keep the instructions —
+they are how the account is reproduced, and every script is idempotent.
+
+Note: this account's system `aws` is CLI 2.0.34 and rejects `--no-cli-pager`.
+Run the `aws batch` commands through `pixi run -e ops aws ...`.
 
 Four steps, in this order. The three scripts each take `--check` (read-only)
 as well as `--apply`, and each is idempotent, so a re-run after changing a

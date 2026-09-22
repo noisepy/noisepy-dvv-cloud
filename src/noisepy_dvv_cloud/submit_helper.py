@@ -69,7 +69,11 @@ def main(argv: list[str] | None = None) -> int:
     end = datetime.strptime(args.end, DATE_FMT)
 
     bucket = parameters.OUTPUT_BUCKET
-    assert bucket, "fill parameters.OUTPUT_BUCKET first (see runbook 03)"
+    if not bucket:
+        raise SystemExit(
+            "no output bucket: export DVV_OUTPUT_BUCKET=<name> "
+            "(scripts/create_bucket.py --apply creates it; runbook 03)"
+        )
     ccf_root = f"s3://{bucket}/{parameters.CCF_PREFIX}"
     dvv_root = f"s3://{bucket}/{parameters.DVV_PREFIX}"
 
