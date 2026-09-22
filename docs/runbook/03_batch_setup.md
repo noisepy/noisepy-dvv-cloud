@@ -4,51 +4,74 @@
 |---|---|---|
 | Compute environment | the Fargate Spot pool | [configs/compute_environment.yaml](../../configs/compute_environment.yaml) |
 | Job queue | where jobs wait for the pool | [configs/job_queue.yaml](../../configs/job_queue.yaml) |
-| Correlate job def | container + argv template, 4 vCPU / 30 GB | [configs/job_definition_correlate.yaml](../../configs/job_definition_correlate.yaml) |
+| Correlate job def | container + argv template, 2 vCPU / 16 GB | [configs/job_definition_correlate.yaml](../../configs/job_definition_correlate.yaml) |
 | dv/v job def | container + argv template, 2 vCPU / 8 GB | [configs/job_definition_dvv.yaml](../../configs/job_definition_dvv.yaml) |
 
 ## Output bucket
 
 ```bash
-aws s3 mb s3://YOUR_BUCKET --region us-west-2
+export DVV_OUTPUT_BUCKET=denolle-dvv-cloud-2026
+pixi run -e ops python scripts/create_bucket.py --apply
 ```
 
-Put the name in `src/noisepy_dvv_cloud/parameters.py` (`OUTPUT_BUCKET`).
+Not `aws s3 mb`. The bucket needs versioning, public-access blocks, default
+encryption and a lifecycle rule, and **versioning only protects objects written
+after it is enabled** — so it has to be on before the first correlate job, not
+after there are products worth protecting. The script sets all of it and is
+idempotent; `--check` reports without changing anything.
+
+`parameters.py` reads `OUTPUT_BUCKET` from `$DVV_OUTPUT_BUCKET`, so the name
+lives on the controller machine and never in a tracked file.
+
+What is set, and the reasoning including why there is no Infrequent Access
+transition, is in [`src/noisepy_dvv_cloud/bucket.py`](../../src/noisepy_dvv_cloud/bucket.py).
 
 ## IAM roles
 
-> **Superseded — read [00b_cloud_hardening.md](00b_cloud_hardening.md) §1.1 first.**
-> Reusing this role means running the campaign under `AmazonS3FullAccess` on an
-> account with nine buckets, and using one role as both job and execution role.
-> QuakeScope already undid both on this same account. The section below is kept
-> only as the record of what exists today.
+```bash
+pixi run -e ops python scripts/scope_iam.py --apply
+```
 
-**Already done — reuse `NoisePyBatchRole`.** Account ACCOUNT_ID has
-`arn:aws:iam::ACCOUNT_ID:role/NoisePyBatchRole`, which already carries everything
-both roles need:
+Two roles, because Fargate uses them for different things:
 
-- trust policy: `ecs-tasks.amazonaws.com`
-- `AmazonECSTaskExecutionRolePolicy` — pull the image, write logs (execution role)
-- `AmazonS3FullAccess` — read/write the output bucket (job role)
+| role | used by | grants |
+|---|---|---|
+| `DvvCloudBatchRole` | the container, as `jobRoleArn` | one bucket: list, get, put, multipart. **No delete of any kind.** |
+| `DvvCloudExecutionRole` | the ECS agent, as `executionRoleArn` | `AmazonECSTaskExecutionRolePolicy` — image pull and log stream. No S3. |
 
-Paste that one ARN into **both** `jobRoleArn` and `executionRoleArn` in the two job
-definition YAMLs, and into `parameters.py`. QuakeScope used a single role the same way.
-Reads from `scedc-pds`/`ncedc-pds` are anonymous — no policy needed.
+The script simulates both afterwards against a negative control (`scoped-noise`)
+and prints the two `export` lines for `DVV_JOB_ROLE_ARN` and
+`DVV_EXECUTION_ROLE_ARN`.
+
+**Why not reuse `NoisePyBatchRole`,** which the earlier version of this page
+recommended: it is the live `jobRoleArn` on both revisions of
+`niyiyu-noisepy-scedc-2022`, so scoping it down would change what another
+person's jobs can do, silently. Simulated on 2026-09-22, it also allows
+`s3:DeleteObject` and `s3:DeleteObjectVersion` on our products and full access
+to every other bucket in the account — six denials this campaign needs and that
+role cannot provide. Roles are free; new ones leave the legacy jobs alone.
+
+Reads from `scedc-pds`/`ncedc-pds` are anonymous (`correlate.py:68` sets
+`{"anon": True}`), so no archive needs a grant.
+
+**No delete permission** because nothing in `src/` deletes — verified by grep
+for `.rm(`, `delete_object`, `DeleteObject`, `.remove(`, zero hits — and shard
+files are content-hash-named, so a re-run overwrites rather than cleaning up.
+`scripts/scope_iam.py` asserts the denial rather than assuming it, and
+`tests/test_cloud_spec.py` fails if a later edit adds a `Delete*` action.
 
 ## Bucket policy
 
-**Not required.** Every IAM user in the account belongs to the `scoped` group, which
-carries `AmazonS3FullAccess` — niyiyu and the other group members can read and write
-the new bucket as soon as it exists, and an Allow statement in a bucket policy would
-grant nothing on top of that.
+**Optional, and the third line of defence rather than the first.** Every IAM
+user in the account is in the `scoped` group, which carries
+`AmazonS3FullAccess`; policies are additive for Allow, so an Allow statement
+here grants nothing. What the policy buys is a *delete guard*, because an
+explicit `Deny` outranks any Allow. Versioning (line one) and the lifecycle
+rule (line two) do the real work.
 
-The one thing a bucket policy buys here is a *delete guard*: 30 users hold
-`AmazonS3FullAccess`, and an explicit `Deny` is the only thing that outranks it. See
-[configs/bucket_policy.json](../../configs/bucket_policy.json) — optional, apply it if
-you want campaign products protected from accidental deletion.
-
-A bucket policy becomes *mandatory* only for principals outside account
-ACCOUNT_ID.
+See [configs/bucket_policy.json](../../configs/bucket_policy.json) — apply it if
+you want campaign products protected from the other 29 group members. A bucket
+policy becomes mandatory only for principals outside this account.
 
 ## Create the objects (in order)
 
@@ -74,5 +97,21 @@ later never means editing a tracked file.
 
 Record the names you used in `parameters.py`. Convention: `dvvcloud<year>_env`,
 `_queue`, `_correlate`, `_dvv`.
+
+## Check it before submitting anything
+
+```bash
+pixi run -e ops python scripts/preflight.py
+```
+
+Exit 0 only if nothing FAILs. It reads the roles, the bucket, the Batch objects
+and the image back from AWS rather than from `configs/`, so it catches a job
+definition registered against the wrong role — which otherwise surfaces as
+`ResourceInitializationError` at task start and reads like a Secrets Manager
+problem. A check that cannot reach AWS reports `UNKNOWN`, never `PASS`.
+
+Simulation is still a model of the IAM evaluator. The evidence that the model
+matched reality is one real job that starts, reads, writes an object and exits
+— which is Phase 2, the micro-smoke.
 
 Next: [04_submitting_jobs.md](04_submitting_jobs.md)

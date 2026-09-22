@@ -38,6 +38,7 @@ before any AWS object is created.
 - [ ] **A. AWS basics** — account, CLI, billing guardrail → [01_aws_setup.md](01_aws_setup.md) (½ day first time)
 - [ ] **B. Container** — push to main, GH Action builds `ghcr.io/noisepy/noisepy-dvv-cloud`, local smoke test → [02_container.md](02_container.md) (1 h)
 - [ ] **C. Batch objects** — output bucket, IAM roles, compute env, queue, 2 job defs → [03_batch_setup.md](03_batch_setup.md) (½ day)
+- [ ] **C2. Preflight** — `pixi run -e ops python scripts/preflight.py`, which reads roles, bucket, Batch objects and image back from AWS. Exit 0 or do not submit.
 - [ ] **D. Smoke test + campaign** — 1 station gate, then submit → [04_submitting_jobs.md](04_submitting_jobs.md)
 - [ ] **E. Monitor + teardown** — jobs, logs, spend cap → [05_monitoring.md](05_monitoring.md)
 

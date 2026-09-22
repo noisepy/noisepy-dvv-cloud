@@ -162,9 +162,9 @@ created**. 4–5 can follow while the correlate stage drains.
 
 | # | Port | From QuakeScope | Why it matters here |
 |---|---|---|---|
-| 1 | `scripts/scope_iam.py` | `scripts/scope_batch_role_s3.py` | Creates the `DvvCloudExecutionRole` / `DvvCloudBatchRole` split, attaches the scoped policy before detaching `AmazonS3FullAccess`, simulates before/after with a negative control |
-| 2 | Bucket versioning + lifecycle at creation | `preflight.py::check_bucket` | Cheaper at `aws s3 mb` time than retrofitted; the only real protection against a bad delete |
-| 3 | `scripts/preflight.py` | `scripts/preflight.py` | Roles, images, bucket versioning, queue state. Exit 0 only if nothing FAILs; reports `UNKNOWN` when AWS is unreachable, because absence of evidence must not read as evidence of safety |
+| 1 | **done** — [`scripts/scope_iam.py`](../../scripts/scope_iam.py) | `scripts/scope_batch_role_s3.py` | Creates the `DvvCloudExecutionRole` / `DvvCloudBatchRole` split and the scoped one-bucket policy, simulates both roles against a negative control. Departs from the original in two ways: it creates new roles rather than narrowing a shared one, and it grants **no delete at all** |
+| 2 | **done** — [`scripts/create_bucket.py`](../../scripts/create_bucket.py) + [`bucket.py`](../../src/noisepy_dvv_cloud/bucket.py) | `preflight.py::check_bucket` | Versioning, public-access blocks, SSE-S3, lifecycle — set at creation, because versioning only covers objects written after it is enabled. The spec and the check live in one module so they cannot drift |
+| 3 | **done** — [`scripts/preflight.py`](../../scripts/preflight.py) | `scripts/preflight.py` | Roles, images, bucket versioning, Batch objects, and whether the tracked configs still hold account detail. Exit 0 only if nothing FAILs; reports `UNKNOWN` when AWS is unreachable, because absence of evidence must not read as evidence of safety |
 | 4 | `costs_actual.json` + Batch-runtime estimator | `costs_actual.json`, `scripts/campaign_spend.py` | **Replaces** Gate 2 rather than deferring it. Split spend into work that produced products and work that did not — a single total hides the thing worth knowing |
 | 5 | `scripts/spot_governor.py` | `scripts/spot_governor.py` | See below — this one is not optional for the 2-year run |
 
@@ -242,7 +242,7 @@ the current tree.
 | Full history | `detect-secrets` over all 21 commits on every ref (`git archive` per commit) | **0 findings** |
 | Full history | regex sweep for `AKIA`/`ASIA`/`A3T*`, PEM headers, `aws_secret_access_key`, `xox*`, `ghp_`, `github_pat_`, `sk-`, JWTs | **0 findings** |
 | Sensitive filenames | every path ever added on any branch, filtered for `.env`/`.pem`/`.key`/`credentials`/`id_rsa`/`.tfstate` | **none ever committed** |
-| Account identifiers | `073795725844` / `897729121516` across all history | **never committed** — docs use `ACCOUNT_ID` |
+| Account identifiers | this account's and the legacy account's 12-digit ids, across all history | **never committed** — docs use `ACCOUNT_ID`, and this row deliberately does not spell them out either |
 | GitHub Actions | `.github/workflows/docker.yml` | only `secrets.GITHUB_TOKEN`; `permissions:` least-privilege (`contents: read`, `packages: write`); **no AWS credentials, no OIDC role** |
 | Repo settings | `actions/secrets`, `actions/variables` | **0 secrets, 0 variables** — nothing to leak |
 | Container images | both Dockerfiles | no `ENV`/`ARG` secrets; explicit `COPY pyproject.toml README.md` + `COPY src`, never `COPY . .` |
@@ -346,25 +346,72 @@ through the API; the local token's scopes are
 `admin:public_key, gist, read:org, repo`, so this is a web-UI action:
 **GitHub → Packages → noisepy-dvv-cloud → Package settings → Change visibility.**
 
-## 5. Open decisions
+## 5. Decisions, and the evidence that settled them — 2026-09-22
 
-Neither should be guessed; both were put to the user and are unanswered.
+Both were open; neither was guessed.
 
-1. **Scope now** — port all five items, or just 1–3 (credentials/safety
-   foundation) and leave cost tracking + governor until after the correlate run
-   is submitted?
-2. **Role naming** — create new `DvvCloudBatchRole` / `DvvCloudExecutionRole`,
-   or scope `NoisePyBatchRole` in place? New roles are preferable because
-   `NoisePyBatchRole` may have consumers outside this project that cannot be
-   seen from here; scoping it in place would break them silently.
+**1. Scope — items 1–3 now, 4–5 after the correlate stage is submitted.**
+Items 1–3 gate the first job: nothing can be launched safely without the roles,
+the bucket and a check. Cost tracking (item 4) has nothing to measure until
+jobs run, and the Spot governor (item 5) matters over a two-year campaign, not
+over a ten-day smoke test.
+
+**2. Role naming — new `DvvCloud*` roles, not `NoisePyBatchRole` scoped in
+place.** The concern was that the legacy role might have consumers invisible
+from here. It does: it is the `jobRoleArn` on **both revisions of
+`niyiyu-noisepy-scedc-2022`**, and on nothing else on the account. Narrowing it
+would change what those jobs can do without telling their owner. Roles cost
+nothing.
+
+Simulated read-only against that role on 2026-09-22, using the same check list
+`scope_iam.py` applies to the new one — this is the "before" row set that §3
+step 3 asks for:
+
+| action | resource | decision |
+|---|---|---|
+| `s3:ListBucket`, `s3:GetBucketLocation`, `s3:ListBucketMultipartUploads` | the products bucket | allowed (wanted) |
+| `s3:GetObject`, `s3:PutObject`, `s3:AbortMultipartUpload`, `s3:ListMultipartUploadParts` | a product object | allowed (wanted) |
+| `s3:DeleteObject`, `s3:DeleteObjectVersion` | a product object | **allowed — not wanted** |
+| `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` | `scoped-noise/anything` | **allowed — not wanted** |
+| `s3:ListBucket` | `scoped-noise` | **allowed — not wanted** |
+| `secretsmanager:GetSecretValue` | a secret ARN | implicitDeny (wanted) |
+
+Six of fourteen rows wrong, all of them `AmazonS3FullAccess` reaching past the
+one bucket this campaign uses.
+
+**3. Public vs private subnets — public, decided rather than inherited.** §4
+flagged VPC endpoints as an unchecked rule. Checked 2026-09-22: QuakeScope's
+`niyiyu-noisepy-scedc` compute environment sits in the account's **default
+VPC**, whose single main route table sends `0.0.0.0/0` to an internet gateway,
+so all four of its subnets are public. **The account has no NAT gateways and no
+VPC endpoints at all.** The NAT data-processing charge that motivates interface
+endpoints therefore cannot be incurred, and `assignPublicIp: ENABLED` in both
+job definitions matches the pattern already proven on this account. An S3
+gateway endpoint is free and still worth adding; it is a refinement, not a
+blocker.
+
+**4. Permission boundaries — not used, deliberately.** §4 flagged them as the
+second unchecked agent rule. The rule is about job roles that share a compute
+environment; `dvvcloud2026_env` is this project's alone, and the roles it uses
+are new and reach one bucket. What a boundary would actually buy is a cap on
+future careless grants — and `scripts/preflight.py` already catches that, by
+simulating the denials on every run rather than trusting that nobody attached
+`AmazonS3FullAccess` later. A control that runs beats a control that is
+configured. Revisit if a second pipeline is ever pointed at these roles.
 
 ---
 
-## 6. State as of 2026-09-11
+## 6. State as of 2026-09-22
 
-**Repo.** `main` = `57eed51`, with PR #3 (pixi environments, Gate 1 comparison
-fixes, cross-component masking, credential hygiene) and PR #4 (fallback coda
-window) both merged. Merged local branches pruned.
+**Repo.** `main` = `986b668`. PR #3 (pixi environments, Gate 1 comparison
+fixes, cross-component masking, credential hygiene), PR #4 (fallback coda
+window), PR #5 (this document) and PR #6 (automated secret scanning, the
+`image-pullable` check) all merged. Merged local branches pruned.
+
+**Launch blocker cleared.** `ghcr.io/noisepy/noisepy-dvv-cloud` was made public
+on 2026-09-22. Both tags return HTTP 200 to an anonymous pull token, and the
+`image-pullable` job in the `security` workflow passes as a hard check on
+`main` — so a Fargate task can pull what a campaign would launch.
 
 **Open work.**
 
@@ -391,9 +438,23 @@ source): a pure per-band constant, independent of `cc` — **2.16x** at 1–2 Hz
 correction changes **only** the error columns, never dv/v. Gate 1 gates on
 `r > 0.9` of the dv/v series and is unaffected either way.
 
-**AWS.** Nothing for this project exists yet: no `dvvcloud*` compute
-environment, queue or job definition, and no output bucket. The only Batch
-objects on the account are the legacy `niyiyu-noisepy-scedc` ones. `configs/`
-still has six `[REQUIRED]` placeholders across three files (subnets, security
-group, and the role ARN four times). Fill `*.local.yaml` copies — the tracked
-skeletons stay templates, and `.gitignore` covers that suffix.
+**AWS.** Nothing for this project exists on the account yet — verified by
+`scripts/preflight.py` on 2026-09-22, which reports FAIL on the compute
+environment, the queue, both job definitions, the two roles and the bucket, and
+PASS on the image and on repo hygiene. The only Batch objects on the account
+are the legacy `niyiyu-noisepy-scedc` ones. `configs/` still has six
+`[REQUIRED]` placeholders across three files (subnets, security group, and the
+role ARN four times). Fill `*.local.yaml` copies — the tracked skeletons stay
+templates, and `.gitignore` covers that suffix.
+
+The tooling to create all of it now exists and is checked in. What remains is
+running `--apply` three times, which is the first change this project makes to
+the account:
+
+```bash
+export DVV_OUTPUT_BUCKET=<name>
+pixi run -e ops python scripts/create_bucket.py --apply
+pixi run -e ops python scripts/scope_iam.py --apply
+# fill configs/*.local.yaml, register the Batch objects, then:
+pixi run -e ops python scripts/preflight.py
+```
