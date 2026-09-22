@@ -15,19 +15,31 @@ the location code is empty: `CI.LJR.`.
 
 ## Smoke test (do not skip)
 
+**Passed 2026-09-22 on CI.LJR** — both stages, exit 0, products verified. See
+[00b_cloud_hardening.md](00b_cloud_hardening.md) §6, which also records the one
+defect it exposed (a single all-NaN ensemble member NaNs the whole dv/v mean).
+
 ```bash
-python -m noisepy_dvv_cloud.submit_helper correlate \
-  --station_file station_lists/example_ci.txt \
+export DVV_OUTPUT_BUCKET=denolle-dvv-cloud-2026
+pixi run -e ops python -m noisepy_dvv_cloud.submit_helper correlate \
+  --station_file station_lists/smoke_ljr.txt \
   --start 2023.001 --end 2023.011 \
   --station_group_size 1 --day_group_size 10
 ```
 
-This submits a handful of one-station jobs. Watch one to completion (**Console →
+One station, ten days, one shard. CI.LJR because it is the Clements-Denolle
+2022 reference station, so the same correlations feed Gate 1 later without
+recomputing anything. Use `station_lists/example_ci.txt` for the three-station
+version. Watch one to completion (**Console →
 Batch → Jobs**), then check the products:
 
 ```bash
-aws s3 ls --recursive s3://YOUR_BUCKET/ccf/v1/ | head
+pixi run -e ops aws s3 ls --recursive s3://$DVV_OUTPUT_BUCKET/ccf/v1/ | head
 ```
+
+Expect six Parquet shards, one per `acorr_only` component pair
+(`EE EN EZ NN NZ ZZ`). The system `aws` on the controller is CLI 2.0.34 and
+rejects `--no-cli-pager`; run AWS commands through `pixi run -e ops aws`.
 
 Then the dv/v stage on the same stations, and read the Parquet back with the
 DuckDB query from [docs/parquet-schemas.md](../parquet-schemas.md).

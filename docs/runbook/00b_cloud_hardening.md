@@ -462,7 +462,83 @@ they stay that way.
 the second reason the `ops` environment exists, alongside the ruamel-yaml pin
 conflict.
 
-**Still outstanding:** §3 step 6. Simulation is a model of the IAM evaluator;
-the evidence that the model matched reality is one real job that starts, reads,
-writes an object and exits. That is Phase 2, the micro-smoke, and it has not
-been run.
+**§3 step 6 — done 2026-09-22.** Both stages ran end to end on CI.LJR (Lake
+Hughes, the Clements-Denolle 2022 reference station), 2023.001–2023.011, from
+`station_lists/smoke_ljr.txt`:
+
+| job | exit | queue→start | run | resources |
+|---|---|---|---|---|
+| `correlate_20260922115411_0` | 0 | 59 s | 81 s | 2 vCPU / 16 GB |
+| `dvv_20260922115751_0` | 0 | 53 s | 26 s | 2 vCPU / 8 GB |
+
+What each one proves, which is why both were needed:
+
+- **correlate** reached `RUNNING` 60 s after submission, so `DvvCloudExecutionRole`
+  pulled the public ghcr image with no `CannotPullContainerError`, read
+  `scedc-pds` anonymously, and wrote under `DvvCloudBatchRole`.
+- **dvv** read the CCFs back out of the products bucket, which is the only
+  thing that exercises the job role's `s3:GetObject`. correlate never does —
+  it reads the archive anonymously and only writes.
+
+Products: six CCF Parquet shards (`EE EN EZ NN NZ ZZ`, the `acorr_only` upper
+triangle) and four dv/v tables, one per octave band. The CCFs check out
+physically: lag axis exactly 2561 samples = 2 x 32 s x 40 Hz + 1, 100 % finite,
+all ten days present, and the ZZ autocorrelation peaks at the zero-lag sample
+on nine of ten days (day two at +0.05 s). `nwindows` runs 71–121 against the
+~189 a gapless day would give, so LJR has real gaps in that window — worth
+watching on the campaign, not a blocker.
+
+Object versioning is live on the products: every key carries a `VersionId`.
+
+**Do not read a dollar figure into those runtimes.** Cost Explorer is denied by
+SCP `p-q1ngvul9` (§1.2), and one 10-day shard amortises container start and the
+StationXML catalogue load differently from a 30-day campaign shard. 8 s per
+station-day is a first data point, not a rate. The estimator that turns Batch
+start/stop times into spend is §4 item 4 and is still unported.
+
+### The defect the smoke test found
+
+**dv/v came back NaN on all ten days in all four bands, while `cc` was 0.91 to
+1.00 and `n_members` said 4.** A product that reports four contributing members
+*and* a NaN measurement is self-inconsistent, which is what makes this worth
+chasing rather than filing under "ten days is too short".
+
+Reproduced locally against the same S3 CCFs, per ensemble member, band 2–4 Hz:
+
+| member | config change | finite dv/v |
+|---|---|---|
+| `baseline` | — | 10/10 |
+| `stack_half` | stack 90 → 45 | 10/10 |
+| `stack_double` | stack 90 → 180 | 10/10 |
+| `window_late` | coda window +25 % | 10/10 |
+| `ref_swap` | reference `fixed` → `moving` | **0/10** |
+
+Four members produced a measurement on every epoch. `stack_double` asks for 180
+days of history and still returns finite values from ten, so the stack-length
+members degrade gracefully. **`reference: "moving"` does not** — it returns
+nothing at all on a series this short.
+
+The failure is then arithmetic: `processing_ensemble` takes `stack.mean(axis=0)`,
+a plain mean, so a single all-NaN member makes the ensemble mean NaN at *every*
+epoch. Measured on these ten days: plain mean 0/10 finite, `np.nanmean` 10/10.
+
+**Why this matters beyond a short smoke test.** It is not "ten days is too
+short" — it is "one failing member silently discards the other four". On the
+campaign that costs the leading epochs of every station, for however long the
+moving reference needs to spin up, and it would cost any isolated epoch where
+one member happens to fail. `compare_cd2022.py` drops a 150-day burn-in, so
+Gate 1 may well never see it, which is the bad case: a silent loss that the
+gate is blind to.
+
+**Not fixed here — it is a method decision, not a bug fix.** Three routes:
+
+1. Drop all-NaN members before calling `processing_ensemble`. Cheapest, fixes
+   exactly the `ref_swap` case, and `n_members` already records what happened.
+2. Mask per epoch rather than per member. More faithful, but the methodological
+   variance is then computed over a member count that varies with epoch.
+3. Treat it as upstream: `processing_ensemble` arguably wants `nanmean` when it
+   is handed `within_sigma`. That would ride along with the codameter 0.5 pin
+   bump, which is already pending for the Weaver band-form change.
+
+Nothing blocks the correlate campaign either way: the correlate stage never
+imports codameter (§6, sequencing).

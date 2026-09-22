@@ -1,0 +1,7 @@
+# Micro-smoke: one station, ten days. CI.LJR (Lake Hughes) because it is the
+# Clements-Denolle 2022 reference station, so the same correlations feed Gate 1
+# later without recomputing anything.
+#
+# Verified present in scedc-pds on 2026-09-22: BH?/HH? for 2023.001 under
+# continuous_waveforms/2023/2023_001/, and FDSNstationXML/CI/CI_LJR.xml.
+CI.LJR.
