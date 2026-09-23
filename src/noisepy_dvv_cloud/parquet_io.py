@@ -14,6 +14,8 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
+from . import constants
+
 logger = logging.getLogger(__name__)
 
 CCF_SCHEMA = pa.schema(
@@ -114,12 +116,114 @@ def write_ccf_day_batch(
 # sample. Reading argmax as "the autocorrelation peaks at zero lag" confirms
 # the wrong index.
 #
-# This is tied to the pinned noisepy-seis==0.9.93. Re-check with
-# tests/test_lag_axis.py if that pin moves.
+# So the offset is MEASURED from an autocorrelation at read time rather than
+# assumed from the version pin: symmetry identifies zero lag exactly, and a
+# NoisePy that changes this convention is then followed rather than overridden
+# by a stale constant.
+# Fallback only. The offset is MEASURED per station by `measure_zero_lag_index`
+# below; this value is what we use when no autocorrelation is available to
+# measure from, and it is what noisepy-seis 0.9.93 produces.
 ZERO_LAG_INDEX_OFFSET = 1
 
+# (root, network, station) -> measured zero-lag index. One probe per station
+# per process; the answer cannot change between pairs of the same station.
+_ZERO_LAG_CACHE: dict[tuple[str, str, str], int] = {}
 
-def center_on_zero_lag(ccfs: np.ndarray, fs: float) -> tuple[np.ndarray, np.ndarray]:
+
+def _asymmetry(trace: np.ndarray, centre: int) -> float:
+    """RMS mismatch between the two sides of `trace` about `centre`, relative
+    to the trace's own RMS. Zero for a perfectly symmetric function."""
+    k = min(centre, len(trace) - 1 - centre)
+    if k < 1:
+        return np.inf
+    scale = np.sqrt(np.mean(trace**2))
+    if not np.isfinite(scale) or scale == 0:
+        return np.inf
+    left = trace[centre - k : centre][::-1]
+    right = trace[centre + 1 : centre + 1 + k]
+    return float(np.sqrt(np.mean((left - right) ** 2)) / scale)
+
+
+def measure_zero_lag_index(auto: np.ndarray, max_shift: int = 3,
+                           margin: float = 100.0) -> int | None:
+    """Locate zero lag in an AUTOcorrelation by symmetry, or None if unclear.
+
+    An autocorrelation is the inverse transform of a real, non-negative
+    spectrum, so it is symmetric about zero lag exactly -- not statistically.
+    On real products the winning candidate scores ~1e-8 against ~4e-1 for its
+    neighbour, so the test is decisive rather than a best-fit.
+
+    `margin` demands the winner be that much better than the runner-up. Being
+    unsure returns None and the caller falls back to the documented constant,
+    because a confidently wrong lag axis is worse than a documented assumption.
+    Searching only +/-`max_shift` around the midpoint keeps a noisy trace from
+    locking onto a spurious symmetry far away.
+    """
+    trace = np.asarray(auto, dtype=float)
+    if trace.ndim == 2:
+        trace = np.nanmean(trace, axis=0)
+    n = trace.shape[0]
+    mid = n // 2
+    scored = sorted(
+        (_asymmetry(trace, c), c)
+        for c in range(mid - max_shift, mid + max_shift + 1)
+        if 0 < c < n - 1
+    )
+    if len(scored) < 2:
+        return None
+    (best, centre), (second, _) = scored[0], scored[1]
+    if not np.isfinite(best) or best * margin > second:
+        return None
+    return centre
+
+
+def _probe_zero_lag(dataset, root: str, network: str, station: str,
+                    have: np.ndarray | None, pair: str) -> int:
+    """Measured zero-lag index for this station, cached, with a logged fallback."""
+    key = (root, network, station)
+    if key in _ZERO_LAG_CACHE:
+        return _ZERO_LAG_CACHE[key]
+
+    probe = have if pair in constants.AUTO_COMPONENTS else None
+    if probe is None:
+        for auto in constants.AUTO_COMPONENTS:
+            try:
+                tbl = dataset.scanner(
+                    columns=["ccf"],
+                    filter=(
+                        (ds.field("network") == network)
+                        & (ds.field("station") == station)
+                        & (ds.field("pair") == auto)
+                    ),
+                ).head(1)
+            except Exception:  # noqa: BLE001 - any read problem means "cannot probe"
+                continue
+            if tbl.num_rows:
+                probe = np.asarray(tbl.column("ccf")[0].as_py(), dtype=float)
+                break
+
+    n = have.shape[1] if have is not None else None
+    measured = measure_zero_lag_index(probe) if probe is not None else None
+    if measured is None:
+        measured = (n // 2 + ZERO_LAG_INDEX_OFFSET) if n else 0
+        logger.warning(
+            "%s.%s: no autocorrelation to locate zero lag from; assuming index "
+            "%d (noisepy-seis 0.9.93 convention). Correlate EE, NN or ZZ to "
+            "have this measured instead.", network, station, measured,
+        )
+    elif n and measured != n // 2 + ZERO_LAG_INDEX_OFFSET:
+        logger.warning(
+            "%s.%s: zero lag measured at index %d, not the %d this NoisePy "
+            "version is documented to produce. Using the measurement; check "
+            "the noisepy-seis pin.", network, station, measured,
+            n // 2 + ZERO_LAG_INDEX_OFFSET,
+        )
+    _ZERO_LAG_CACHE[key] = measured
+    return measured
+
+
+def center_on_zero_lag(ccfs: np.ndarray, fs: float,
+                       zero: int | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Trim to a genuinely symmetric two-sided window centred on zero lag.
 
     Returns (ccfs, t). Trimming rather than relabelling because the contract
@@ -128,7 +232,8 @@ def center_on_zero_lag(ccfs: np.ndarray, fs: float) -> tuple[np.ndarray, np.ndar
     Costs two samples at the acausal end, 50 ms out of 32 s.
     """
     n = ccfs.shape[1]
-    zero = n // 2 + ZERO_LAG_INDEX_OFFSET
+    if zero is None:
+        zero = n // 2 + ZERO_LAG_INDEX_OFFSET
     k = min(zero, n - 1 - zero)
     return ccfs[:, zero - k : zero + k + 1], np.arange(-k, k + 1) / fs
 
@@ -184,7 +289,8 @@ def read_ccf_matrix(
     fs = float(df["fs"].iloc[0])
     ccfs = np.vstack(df["ccf"].to_numpy()).astype(np.float64)
     days = pd.to_datetime(df["date"]).to_numpy()
-    ccfs, t = center_on_zero_lag(ccfs, fs)
+    zero = _probe_zero_lag(dataset, root, network, station, ccfs, pair)
+    ccfs, t = center_on_zero_lag(ccfs, fs, zero)
     return ccfs, days, t, fs
 
 

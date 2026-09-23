@@ -617,6 +617,32 @@ publish is a *symmetric* two-sided axis. After it, ZZ is symmetric to 1.8e-08
 about the centre and EN is asymmetric at 1.27, which is correct: a
 cross-component correlation has no reason to be symmetric.
 
+**The index is measured, not assumed.** The first version of this fix hard-coded
+`n // 2 + 1` against the pinned `noisepy-seis==0.9.93`, which would have gone
+silently wrong the day that pin moved. `measure_zero_lag_index` instead finds
+the symmetry centre of an autocorrelation at read time and
+`read_ccf_matrix` caches it per station. Reading a cross-component pair sends it
+to probe one row of EE, NN or ZZ for the same station — one extra row read per
+station per process.
+
+Three things make it safe rather than clever:
+
+- it searches only ±3 samples around the midpoint, so a noisy trace cannot lock
+  onto a spurious symmetry somewhere else;
+- it demands the winner score 100x better than the runner-up, and returns
+  "unsure" otherwise. Real products score ~1e-8 against ~4e-1, so the test is
+  decisive rather than a best fit;
+- unsure, or no autocorrelation to measure from, falls back to the documented
+  constant **and logs why**. A measurement that disagrees with the constant also
+  logs, and the measurement wins.
+
+Measured on the campaign products it returns 1281, the same as the constant, so
+no dv/v product changed. `tests/test_lag_axis.py` covers the part that matters:
+it plants traces centred at `n//2 - 1`, `n//2` and `n//2 + 2` and asserts each
+is found, so a NoisePy with a different convention is followed rather than
+overridden; and it asserts the measurement **declines** on a cross-correlation
+and on a dead trace.
+
 **Why it hid.** The mean removal deletes the delta at true zero lag, so `argmax`
 sits on the neighbouring sample — the midpoint. Reading that as "the
 autocorrelation peaks at zero lag" confirms the wrong index, which is exactly
