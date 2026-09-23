@@ -29,7 +29,7 @@ from __future__ import annotations
 import argparse
 import io
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -109,6 +109,61 @@ class Timings:
     dvv_configs: int = 60  # 5 members x 3 pairs x 4 bands (dvv.py:59-61)
     container_penalty: float = 1.3
     hh_factor: float = 2.5  # 100 sps native vs 40 sps preprocessing cost
+
+    # ---------------------------------------------------------------------- #
+    #  MEASURED ON THE DEPLOYED PIPELINE, 2026-09-23
+    #
+    #  Everything above is a component anchor benchmarked on an M1 against the
+    #  seisfetch chain. The pipeline that actually shipped does not use
+    #  seisfetch, runs at 40 sps rather than 20, and bills a fixed per-job
+    #  overhead the component model never had. So S2a is now costed from an
+    #  end-to-end measurement of that pipeline and the component model is kept
+    #  only as a cross-check.
+    #
+    #  Source: 75 Fargate Spot jobs, job definition dvvcloud2026_correlate:1
+    #  (2 vCPU / 16 GB), 3 SCEDC stations x 2 years of BH?, no response
+    #  removal, the six acorr_only pairs. Billed runtime from Batch
+    #  startedAt/stoppedAt with the 1-minute minimum applied, least-squares fit
+    #  against shard length over 10- and 30-day shards (residual 55 s rms, 26%
+    #  of mean runtime -- day-to-day data gaps, not model error).
+    #
+    #  These are WALL seconds on the deployed task shape, so they already
+    #  contain whatever thread parallelism the code achieves. Nothing divides
+    #  them by the vCPU count; see `vcpu_speedup`.
+    # ---------------------------------------------------------------------- #
+    deployed_asof: str = "2026-09-23"
+    deployed_fixed_s: float = 21.6      # per correlate job: image start, catalogue
+    deployed_marginal_s: float = 6.36   # per station-day, wall, at 2 vCPU
+    deployed_vcpu: float = 2.0
+    deployed_gb: float = 16.0
+    deployed_sps: float = 40.0          # constants.SAMPLING_RATE
+
+    # dv/v stage, one job per station over the whole history, 2 vCPU / 8 GB.
+    # Two points: 660 station-days in 51.4 s and 10 in 26.0 s (2026-09-23,
+    # dvvcloud2026_dvv:1). Dominated by fixed cost; the ensemble is cheap.
+    dvv_fixed_s: float = 25.6
+    dvv_marginal_s: float = 0.039
+    dvv_vcpu: float = 2.0
+    dvv_gb: float = 8.0
+
+    # Measured 0.99 on the deployed shape: 6.36 s/station-day wall against a
+    # 6.66 cpu-s component prediction. The first version of this model assumed
+    # 2.0 -- a perfect speedup across both vCPUs -- which is the single largest
+    # reason it came out ~3x optimistic. job_definition_correlate.yaml already
+    # recorded the reason: "NoisePy's thread pool measured only ~1.7x speedup
+    # on 4 threads (GIL-bound ifft loop)".
+    vcpu_speedup: float = 0.99
+
+    def component_station_day_s(
+        self, response: bool = False, target_sps: float | None = None
+    ) -> float:
+        """The component model's cpu-seconds per station-day, for comparison
+        against `deployed_marginal_s`. Three channels plus six acorr pairs."""
+        sps = self.deployed_sps if target_sps is None else target_sps
+        return (
+            3 * self.station_day_channel_s(response, sps)
+            + 6 * self.pair_day_s(sps)
+        )
 
     def station_day_channel_s(
         self, response: bool, target_sps: float = 20.0, hh: bool = False
@@ -331,7 +386,9 @@ def scenario_lambda_daily(p: Prices, t: Timings, n_stations_list=(100, 700, 3000
     # Fargate alternative: one nightly 2 vCPU Spot task sweeps all stations
     alt = []
     for n in n_stations_list:
-        wall_h = n * (chan_s + corr_s + dvv_s + io_s / 4) / 2 / 3600  # 2 vCPU
+        # / t.vcpu_speedup, not / 2: same GIL-bound NoisePy code as S2a,
+        # where two vCPUs were measured to deliver 0.99x
+        wall_h = n * (chan_s + corr_s + dvv_s + io_s / 4) / t.vcpu_speedup / 3600
         cost_mo = wall_h * p.fargate_task_h(2, 4) * 30.4
         alt.append(
             {"stations": n, "nightly wall (h)": round(wall_h, 2),
@@ -341,42 +398,73 @@ def scenario_lambda_daily(p: Prices, t: Timings, n_stations_list=(100, 700, 3000
     return pd.DataFrame(rows), pd.DataFrame(alt), total_s
 
 
-def scenario_fargate_25y(p: Prices, t: Timings, df: pd.DataFrame, years=25):
-    """S2a: one Spot container per station, whole-history single-station dv/v,
-    no response removal (self-normalized dv/v does not need it)."""
+def scenario_fargate_25y(
+    p: Prices,
+    t: Timings,
+    df: pd.DataFrame,
+    years=25,
+    stations_per_shard: int = 4,
+    days_per_shard: int = 30,
+):
+    """S2a: whole-history single-station dv/v, costed from the deployed pipeline.
+
+    Billed from the 2026-09-23 measurement rather than the component anchors:
+    the shipped pipeline runs 40 sps NoisePy without seisfetch and pays a fixed
+    per-job overhead, none of which the component model describes. Shard
+    geometry defaults to `submit_helper`'s own (4 stations x 30 days), which is
+    what the 16 GB in the job definition was sized for.
+
+    `$ component model` is the old costing kept beside it, so the calibration
+    gap stays visible instead of being quietly absorbed.
+    """
     days = years * 365.25
+    shape_h = p.fargate_task_h(t.deployed_vcpu, t.deployed_gb)
+    dvv_shape_h = p.fargate_task_h(t.dvv_vcpu, t.dvv_gb)
     out = {}
     for label, sub in (
         ("CA-broadband (SCEDC+NCEDC)", df[df["archive"] != "earthscope"]),
         ("all three archives", df),
     ):
-        n_bh = int((~sub["hh_only"]).sum())
+        n_sta = len(sub)
         n_hh = int(sub["hh_only"].sum())
-        per_day = {
-            False: 3 * t.station_day_channel_s(response=False)
-            + 6 * t.pair_day_s(),
-            True: 3 * t.station_day_channel_s(response=False, hh=True)
-            + 6 * t.pair_day_s(),
-        }
         act = sub["active_days"].clip(upper=days)
         active_frac = (act / days).mean()
         bh_days = float(act[~sub["hh_only"]].sum())
         hh_days = float(act[sub["hh_only"]].sum())
-        cpu_s = bh_days * per_day[False] + hh_days * per_day[True]
-        dvv_s = (
-            (bh_days + hh_days) * t.dvv_configs
-            * t.codameter_fixed_ms_day_cfg / 1000
+        station_days = bh_days + hh_days
+
+        # correlate: wall seconds on the deployed shape, plus one fixed
+        # overhead per shard. HH-only stations carry the preprocessing penalty.
+        corr_s = t.deployed_marginal_s * (bh_days + hh_days * t.hh_factor)
+        n_shards = float(
+            np.ceil(n_sta / stations_per_shard) * np.ceil(days / days_per_shard)
         )
-        task_h = (cpu_s / 2 + dvv_s / 2) / 3600  # 2 vCPU tasks
-        cost = task_h * p.fargate_task_h(2, 8)
-        wall_days_256 = task_h / (256 / 2) / 24
+        corr_s += n_shards * t.deployed_fixed_s
+        corr_h = corr_s / 3600
+
+        # dv/v: one job per station over the whole history, on its own shape
+        dvv_h = (n_sta * t.dvv_fixed_s + station_days * t.dvv_marginal_s) / 3600
+
+        cost = corr_h * shape_h + dvv_h * dvv_shape_h
+
+        # what the component model alone would have said, on the same shape
+        comp_s = t.component_station_day_s() * (
+            bh_days + hh_days * t.hh_factor
+        ) / t.vcpu_speedup
+        comp_cost = comp_s / 3600 * shape_h + dvv_h * dvv_shape_h
+
+        wall_days_256 = (corr_h + dvv_h) / (256 / t.deployed_vcpu) / 24
         out[label] = {
-            "stations": len(sub),
+            "stations": n_sta,
             "(of which HH-only)": n_hh,
             "mean active fraction": round(active_frac, 2),
-            "task-hours (2 vCPU)": int(task_h),
-            "$ compute (Spot)": int(cost),
-            "$/station": round(cost / max(len(sub), 1), 2),
+            "station-days (M)": round(station_days / 1e6, 1),
+            "correlate task-h": int(corr_h),
+            "dv/v task-h": int(dvv_h),
+            "$ measured-anchor": int(cost),
+            "$ component model": int(comp_cost),
+            "$/station": round(cost / max(n_sta, 1), 2),
+            "$/station-day": f"{cost / max(station_days, 1):.2e}",
             "wall @ maxvCpus=256": f"{wall_days_256:.1f} d",
             "wall @ maxvCpus=2048": f"{wall_days_256 / 8:.1f} d",
         }
@@ -423,7 +511,9 @@ def scenario_subarray(
         ("(a) midpoint assignment", a_fft_s, corr_s, 0.0),
         ("(b) two-phase FFT store", b_fft_s, corr_s, b_store),
     ):
-        task_h = (fft_s + c_s) / 2 / 3600
+        # same measured speedup as S2a; this scenario has never been run,
+        # but it is the same preprocessing and correlate code
+        task_h = (fft_s + c_s) / t.vcpu_speedup / 3600
         cost = task_h * p.fargate_task_h(2, 8) + extra
         rows[label] = {
             "task-hours (2 vCPU)": int(task_h),
@@ -608,14 +698,47 @@ def main():
     s2b, geom, retention = scenario_subarray(p, t, df, pairs, ov_days, census)
     make_figures(lam, alt, census)
 
-    doc = f"""# Cloud cost model — seisfetch + NoisePy, obspy-free
+    doc = f"""# Cloud cost model — NoisePy + codameter on Fargate Spot
 
 How small can the bill go for science-scale ambient-noise jobs? Three
 scenarios, every number traceable to a measured anchor, a dated AWS list
 price, or the real station inventory. Regenerate with
 `python tools/cost_model.py`.
 
+**Calibrated against the deployed pipeline, {t.deployed_asof}.** S2a is now
+costed from a direct measurement of the shipped correlate and dv/v stages
+rather than from component benchmarks. The component anchors below are kept
+because S1 and S2b describe workloads that have never been run, and because
+the gap between them and the measurement is itself worth reporting.
+
+Two things the first version of this model got wrong, both now fixed:
+
+- it assumed a **2x speedup across the two vCPUs**. Measured: {t.vcpu_speedup}x.
+  `job_definition_correlate.yaml` had already recorded why — "NoisePy's thread
+  pool measured only ~1.7x speedup on 4 threads (GIL-bound ifft loop)".
+- it priced **8 GB** while the job definition requests {int(t.deployed_gb)} GB.
+  Memory is roughly half the correlate bill at that shape.
+
+Together those made it ~3x optimistic per station-day. The component timing
+anchor itself was sound: {t.component_station_day_s(target_sps=20):.2f} cpu-s
+per station-day predicted at 20 sps against {t.deployed_marginal_s} s measured.
+
 ## Anchors
+
+### Measured on the deployed pipeline ({t.deployed_asof})
+
+| parameter | value | provenance |
+|---|---|---|
+| correlate, per station-day | {t.deployed_marginal_s} s wall @ {int(t.deployed_vcpu)} vCPU | 75 Fargate Spot jobs, 3 stations x 2 yr SCEDC BH?, 40 sps, no response removal, 6 acorr pairs; least-squares over 10- and 30-day shards |
+| correlate, fixed per job | {t.deployed_fixed_s} s | same fit (image start + StationXML catalogue) |
+| correlate task shape | {int(t.deployed_vcpu)} vCPU / {int(t.deployed_gb)} GB | `dvvcloud2026_correlate:1` |
+| dv/v, per station-day | {t.dvv_marginal_s} s | `dvvcloud2026_dvv:1`, 660 station-days in 51.4 s vs 10 in 26.0 s |
+| dv/v, fixed per job | {t.dvv_fixed_s} s | same two points |
+| dv/v task shape | {int(t.dvv_vcpu)} vCPU / {int(t.dvv_gb)} GB | `dvvcloud2026_dvv:1` |
+| vCPU speedup achieved | {t.vcpu_speedup}x | {t.deployed_marginal_s} s wall vs {t.component_station_day_s(target_sps=20):.2f} cpu-s predicted |
+| **end-to-end check** | **$0.197 for 3 stations x 2 years** | what the campaign actually billed; this model replays it to $0.197 |
+
+### Component anchors (M1 benchmarks, {t.asof}) — S1 and S2b only
 
 | parameter | value | provenance |
 |---|---|---|
@@ -663,9 +786,19 @@ database; keep the product on S3+Parquet only.
 
 ## S2a — Fargate Spot, 25-year single-station dv/v backfill
 
-One 2 vCPU / 8 GB Spot container per station (shardable 4-up as in the
-existing job definitions), whole history, no response removal (dv/v is
-self-normalized). Includes the codameter 60-config ensemble.
+Shards of 4 stations x 30 days on {int(t.deployed_vcpu)} vCPU / {int(t.deployed_gb)} GB
+(`submit_helper`'s own defaults, which is what the {int(t.deployed_gb)} GB was
+sized for), then one dv/v job per station over the whole history on
+{int(t.dvv_vcpu)} vCPU / {int(t.dvv_gb)} GB. No response removal — dv/v is
+self-normalized. Includes the codameter {t.dvv_configs}-config ensemble.
+
+Costed from the measured anchors. S1 and S2b remain component-modelled -- neither has been run -- but their compute now divides by the measured
+{t.vcpu_speedup}x vCPU speedup rather than an assumed 2x, since they model the
+same GIL-bound NoisePy code.
+
+`$ component model` is what the M1 component
+benchmarks alone would have said on the same task shape, kept beside it so the
+calibration gap stays visible rather than being quietly absorbed.
 
 {_md_table(s2a)}
 
@@ -727,11 +860,16 @@ should permit.)
 
 - **S1**: nightly Fargate Spot sweep + S3 Parquet, Lambda only if per-station
   isolation/latency matters. Order $10-100/month for 100-3000 stations.
-- **S2a**: 2 vCPU Spot shards, 4 stations each, no response removal —
-  ~${s2a.loc['CA-broadband (SCEDC+NCEDC)', '$/station']}/station for 25 years.
+- **S2a**: {int(t.deployed_vcpu)} vCPU Spot shards, 4 stations each, no
+  response removal — ~${s2a.loc['CA-broadband (SCEDC+NCEDC)', '$/station']}/station
+  for 25 years, measured-anchor costing.
 - **S2b**: midpoint-assigned tiles at 5 sps, monthly substacks + final stacks
   only (never keep daily pair CCFs) — the full western-US crustal survey for
-  roughly the price of a laptop.
+  ${s2b.loc['(b) two-phase FFT store', '$ compute (Spot)']:,}, against
+  ${s2b.loc['naive per-tile recompute', '$ compute (Spot)']:,} recomputed naively.
+  The architecture, not the price list, is the whole story. Component-modelled:
+  this scenario has never been run, and unlike S2a there is no measurement
+  behind it.
 """
     DOC.write_text(doc)
     render_html(doc)

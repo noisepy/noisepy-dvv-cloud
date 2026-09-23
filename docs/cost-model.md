@@ -1,11 +1,44 @@
-# Cloud cost model — seisfetch + NoisePy, obspy-free
+# Cloud cost model — NoisePy + codameter on Fargate Spot
 
 How small can the bill go for science-scale ambient-noise jobs? Three
 scenarios, every number traceable to a measured anchor, a dated AWS list
 price, or the real station inventory. Regenerate with
 `python tools/cost_model.py`.
 
+**Calibrated against the deployed pipeline, 2026-09-23.** S2a is now
+costed from a direct measurement of the shipped correlate and dv/v stages
+rather than from component benchmarks. The component anchors below are kept
+because S1 and S2b describe workloads that have never been run, and because
+the gap between them and the measurement is itself worth reporting.
+
+Two things the first version of this model got wrong, both now fixed:
+
+- it assumed a **2x speedup across the two vCPUs**. Measured: 0.99x.
+  `job_definition_correlate.yaml` had already recorded why — "NoisePy's thread
+  pool measured only ~1.7x speedup on 4 threads (GIL-bound ifft loop)".
+- it priced **8 GB** while the job definition requests 16 GB.
+  Memory is roughly half the correlate bill at that shape.
+
+Together those made it ~3x optimistic per station-day. The component timing
+anchor itself was sound: 6.79 cpu-s
+per station-day predicted at 20 sps against 6.36 s measured.
+
 ## Anchors
+
+### Measured on the deployed pipeline (2026-09-23)
+
+| parameter | value | provenance |
+|---|---|---|
+| correlate, per station-day | 6.36 s wall @ 2 vCPU | 75 Fargate Spot jobs, 3 stations x 2 yr SCEDC BH?, 40 sps, no response removal, 6 acorr pairs; least-squares over 10- and 30-day shards |
+| correlate, fixed per job | 21.6 s | same fit (image start + StationXML catalogue) |
+| correlate task shape | 2 vCPU / 16 GB | `dvvcloud2026_correlate:1` |
+| dv/v, per station-day | 0.039 s | `dvvcloud2026_dvv:1`, 660 station-days in 51.4 s vs 10 in 26.0 s |
+| dv/v, fixed per job | 25.6 s | same two points |
+| dv/v task shape | 2 vCPU / 8 GB | `dvvcloud2026_dvv:1` |
+| vCPU speedup achieved | 0.99x | 6.36 s wall vs 6.79 cpu-s predicted |
+| **end-to-end check** | **$0.197 for 3 stations x 2 years** | what the campaign actually billed; this model replays it to $0.197 |
+
+### Component anchors (M1 benchmarks, 2026-08-06) — S1 and S2b only
 
 | parameter | value | provenance |
 |---|---|---|
@@ -45,9 +78,9 @@ sweeps every station sequentially:
 
 |   stations |   nightly wall (h) |   $ total/mo |   $/station-day |
 |-----------:|-------------------:|-------------:|----------------:|
-|        100 |               0.14 |         0.12 |           4e-05 |
-|        700 |               0.96 |         0.86 |           4e-05 |
-|       3000 |               4.11 |         3.7  |           4e-05 |
+|        100 |               0.28 |         0.25 |           8e-05 |
+|        700 |               1.94 |         1.75 |           8e-05 |
+|       3000 |               8.31 |         7.48 |           8e-05 |
 
 ![S1 crossover](cost-model-figs/s1_crossover.png)
 
@@ -61,14 +94,24 @@ database; keep the product on S3+Parquet only.
 
 ## S2a — Fargate Spot, 25-year single-station dv/v backfill
 
-One 2 vCPU / 8 GB Spot container per station (shardable 4-up as in the
-existing job definitions), whole history, no response removal (dv/v is
-self-normalized). Includes the codameter 60-config ensemble.
+Shards of 4 stations x 30 days on 2 vCPU / 16 GB
+(`submit_helper`'s own defaults, which is what the 16 GB was
+sized for), then one dv/v job per station over the whole history on
+2 vCPU / 8 GB. No response removal — dv/v is
+self-normalized. Includes the codameter 60-config ensemble.
 
-|                            |   stations |   (of which HH-only) |   mean active fraction |   task-hours (2 vCPU) |   $ compute (Spot) |   $/station | wall @ maxvCpus=256   | wall @ maxvCpus=2048   |
-|:---------------------------|-----------:|---------------------:|-----------------------:|----------------------:|-------------------:|------------:|:----------------------|:-----------------------|
-| CA-broadband (SCEDC+NCEDC) |        671 |                   92 |                   0.52 |                  3348 |                117 |        0.17 | 1.1 d                 | 0.1 d                  |
-| all three archives         |      22191 |                 9837 |                   0.18 |                 49096 |               1716 |        0.08 | 16.0 d                | 2.0 d                  |
+Costed from the measured anchors. S1 and S2b remain component-modelled -- neither has been run -- but their compute now divides by the measured
+0.99x vCPU speedup rather than an assumed 2x, since they model the
+same GIL-bound NoisePy code.
+
+`$ component model` is what the M1 component
+benchmarks alone would have said on the same task shape, kept beside it so the
+calibration gap stays visible rather than being quietly absorbed.
+
+|                            |   stations |   (of which HH-only) |   mean active fraction |   station-days (M) |   correlate task-h |   dv/v task-h |   $ measured-anchor |   $ component model |   $/station |   $/station-day | wall @ maxvCpus=256   | wall @ maxvCpus=2048   |
+|:---------------------------|-----------:|---------------------:|-----------------------:|-------------------:|-------------------:|--------------:|--------------------:|--------------------:|------------:|----------------:|:----------------------|:-----------------------|
+| CA-broadband (SCEDC+NCEDC) |        671 |                   92 |                   0.52 |                3.2 |               6630 |            38 |                 303 |                 414 |        0.45 |        9.63e-05 | 2.2 d                 | 0.3 d                  |
+| all three archives         |      22191 |                 9837 |                   0.18 |               36.1 |             104501 |           548 |                4786 |                6184 |        0.22 |        0.000133 | 34.2 d                | 4.3 d                  |
 
 **Read**: the full California broadband archive for 25 years of
 single-station dv/v is a few hundred dollars; the entire
@@ -104,9 +147,9 @@ Architecture is the cost story — the same science at three prices:
 
 |                          |   task-hours (2 vCPU) |   $ compute (Spot) | wall @ 2048 vCpus   |
 |:-------------------------|----------------------:|-------------------:|:--------------------|
-| naive per-tile recompute |               1317631 |              46059 | 53.6 d              |
-| (a) midpoint assignment  |                919098 |              32128 | 37.4 d              |
-| (b) two-phase FFT store  |                 65448 |               2367 | 2.7 d               |
+| naive per-tile recompute |               2661881 |              93048 | 108.3 d             |
+| (a) midpoint assignment  |               1856764 |              64905 | 75.6 d              |
+| (b) two-phase FFT store  |                132219 |               4701 | 5.4 d               |
 
 **Read**: with 30-km steps a pair sits inside ~14
 tiles, so naive per-tile recompute multiplies the dominant correlation bill
@@ -147,8 +190,13 @@ should permit.)
 
 - **S1**: nightly Fargate Spot sweep + S3 Parquet, Lambda only if per-station
   isolation/latency matters. Order $10-100/month for 100-3000 stations.
-- **S2a**: 2 vCPU Spot shards, 4 stations each, no response removal —
-  ~$0.17/station for 25 years.
+- **S2a**: 2 vCPU Spot shards, 4 stations each, no
+  response removal — ~$0.45/station
+  for 25 years, measured-anchor costing.
 - **S2b**: midpoint-assigned tiles at 5 sps, monthly substacks + final stacks
   only (never keep daily pair CCFs) — the full western-US crustal survey for
-  roughly the price of a laptop.
+  $4,701, against
+  $93,048 recomputed naively.
+  The architecture, not the price list, is the whole story. Component-modelled:
+  this scenario has never been run, and unlike S2a there is no measurement
+  behind it.
