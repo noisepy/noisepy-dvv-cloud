@@ -23,7 +23,10 @@ CCF_SCHEMA = pa.schema(
         ("location", pa.string()),
         ("pair", pa.string()),  # EN, EZ, NZ, EE, NN, ZZ
         ("date", pa.date32()),
-        ("ccf", pa.list_(pa.float32())),  # two-sided, length 2*maxlag*fs+1
+        # two-sided, length 2*maxlag*fs+1, exactly as NoisePy returns it --
+        # its true zero lag is at index n//2+1, NOT the midpoint. Read through
+        # read_ccf_matrix, which centres it. See center_on_zero_lag below.
+        ("ccf", pa.list_(pa.float32())),
         ("fs", pa.float32()),
         ("maxlag_s", pa.float32()),
         ("nwindows", pa.int32()),  # windows stacked into this day
@@ -85,6 +88,51 @@ def write_ccf_day_batch(
     )
 
 
+# NoisePy's returned lag axis is one sample wider than the trace it labels, so
+# the sample it calls t = 0 is NOT the zero lag of the data.
+#
+# noise_module.correlate builds the two-sided function with
+# `np.fft.ifftshift(ifft(crap, Nfft))`, which puts lag zero at index Nfft/2 of
+# an Nfft-sample array. It then trims with
+#
+#     t   = np.arange(-Nfft2 + 1, Nfft2) * dt      # Nfft - 1 entries
+#     ind = np.where(np.abs(t) <= maxlag)[0]
+#
+# and applies `ind` -- indices into a length-(Nfft-1) axis -- to the
+# length-Nfft data. Element j of the result therefore holds lag
+# (ind[j] - Nfft2) * dt while being labelled (ind[j] - Nfft2 + 1) * dt: every
+# label is one sample too large, and true zero lag lands at index n // 2 + 1
+# rather than at the midpoint.
+#
+# Measured on the campaign's own products (CI.LJR, 2022-2023, 2561 lags): an
+# autocorrelation must be symmetric about true zero lag, and ZZ, EE and NN are
+# each symmetric to 1.8e-8 about index 1281 while the midpoint 1280 gives 0.43.
+# That is not a judgement call.
+#
+# Why it was not obvious: `correlate` subtracts the frequency-domain mean,
+# which removes a delta at true zero lag, so argmax sits on the NEIGHBOURING
+# sample. Reading argmax as "the autocorrelation peaks at zero lag" confirms
+# the wrong index.
+#
+# This is tied to the pinned noisepy-seis==0.9.93. Re-check with
+# tests/test_lag_axis.py if that pin moves.
+ZERO_LAG_INDEX_OFFSET = 1
+
+
+def center_on_zero_lag(ccfs: np.ndarray, fs: float) -> tuple[np.ndarray, np.ndarray]:
+    """Trim to a genuinely symmetric two-sided window centred on zero lag.
+
+    Returns (ccfs, t). Trimming rather than relabelling because the contract
+    this module publishes -- and codameter's -- is a *symmetric* two-sided
+    axis; relabelling would satisfy the arithmetic and quietly break that.
+    Costs two samples at the acausal end, 50 ms out of 32 s.
+    """
+    n = ccfs.shape[1]
+    zero = n // 2 + ZERO_LAG_INDEX_OFFSET
+    k = min(zero, n - 1 - zero)
+    return ccfs[:, zero - k : zero + k + 1], np.arange(-k, k + 1) / fs
+
+
 def read_ccf_matrix(
     root: str,
     network: str,
@@ -135,11 +183,8 @@ def read_ccf_matrix(
         )
     fs = float(df["fs"].iloc[0])
     ccfs = np.vstack(df["ccf"].to_numpy()).astype(np.float64)
-    nlag = ccfs.shape[1]
-    # two-sided symmetric lag axis, codameter convention
-    half = (nlag - 1) // 2
-    t = np.arange(-half, half + 1) / fs
     days = pd.to_datetime(df["date"]).to_numpy()
+    ccfs, t = center_on_zero_lag(ccfs, fs)
     return ccfs, days, t, fs
 
 

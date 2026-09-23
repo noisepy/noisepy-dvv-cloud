@@ -483,8 +483,15 @@ What each one proves, which is why both were needed:
 Products: six CCF Parquet shards (`EE EN EZ NN NZ ZZ`, the `acorr_only` upper
 triangle) and four dv/v tables, one per octave band. The CCFs check out
 physically: lag axis exactly 2561 samples = 2 x 32 s x 40 Hz + 1, 100 % finite,
-all ten days present, and the ZZ autocorrelation peaks at the zero-lag sample
-on nine of ten days (day two at +0.05 s). `nwindows` runs 71–121 against the
+all ten days present, and the ZZ autocorrelation symmetric about its zero lag.
+
+> **Corrected 2026-09-23.** This paragraph first read "the ZZ autocorrelation
+> peaks at the zero-lag sample on nine of ten days". It does peak one sample
+> from the axis midpoint, but that is a coincidence of two errors and not a
+> validation — see "The lag axis is off by one" below. Symmetry is the property
+> that actually identifies zero lag on an autocorrelation.
+
+`nwindows` runs 71–121 against the
 ~189 a gapless day would give, so LJR has real gaps in that window — worth
 watching on the campaign, not a blocker.
 
@@ -551,6 +558,77 @@ ten-day smoke case was the extreme of the same defect, not a separate one.
 
 Nothing blocked the correlate campaign either way: the correlate stage never
 imports codameter (§6, sequencing).
+
+### Is the spectral mean removed for autocorrelations? Yes — and the lag axis is off by one
+
+Asked 2026-09-23, answered by reading `noise_module.py` and then measuring.
+
+**The mean removal is not skipped.** `noise_module.correlate` subtracts the
+frequency-domain mean in all three of its branches, ours included
+(`substack=False`, the final `else`):
+
+```python
+crap[:Nfft2] = np.mean(corr[tindx], axis=0)
+crap[:Nfft2] = crap[:Nfft2] - np.mean(crap[:Nfft2], axis=0)
+```
+
+Verified by reproducing that branch exactly (`np.allclose` against NoisePy's
+own output) and toggling the one line: it removes a pure delta at true zero
+lag, amplitude equal to the spectral mean, with the next-largest change 500x
+smaller. Its comment in the sibling branches says as much — "remove the mean in
+freq domain (spike at t=0)".
+
+What **is** conditional on autocorrelation is a different line,
+`crap[0] = complex(0, 0)`, guarded by `if x_corr` with the comment "this only
+if fft1 is different than fft2". It zeroes the DC bin, and it does not exist at
+all in the `substack=False` branch we use. For us that is moot twice over: DC is
+already zeroed in `whiten_1D`, which sets `spec_out[0:ix00] = 0` for everything
+below `freqmin`, and `freqmin` is 0.5 Hz.
+
+So: mean of the spectrum, removed. DC, removed upstream. The dominant zero-lag
+energy in our gathers is what survives both, which is why the dashboard scales
+each row by its coda rather than its peak.
+
+**The lag axis, however, is off by one sample.** `correlate` builds the trace
+with `ifftshift(ifft(crap, Nfft))`, putting zero lag at index `Nfft/2` of an
+`Nfft`-sample array, then trims with an axis that has only `Nfft - 1` entries:
+
+```python
+t   = np.arange(-Nfft2 + 1, Nfft2) * dt      # Nfft - 1 entries
+ind = np.where(np.abs(t) <= maxlag)[0]       # indexed into length-Nfft data
+```
+
+Every returned sample is therefore labelled one lag too large, and true zero
+lag lands at index `n // 2 + 1` rather than the midpoint.
+
+Measured on the campaign's own products (CI.LJR, 2022–2023, 2561 lags) — an
+autocorrelation is symmetric about true zero lag and nothing else:
+
+| centre | ZZ | EE | NN |
+|---|---|---|---|
+| 1279 | 5.0e-01 | 5.0e-01 | 5.0e-01 |
+| 1280 (our old t = 0) | 4.3e-01 | 4.3e-01 | 4.3e-01 |
+| **1281** | **1.8e-08** | **1.8e-08** | **1.9e-08** |
+
+`parquet_io.center_on_zero_lag` now trims to a symmetric window centred on true
+zero lag, costing two samples at the acausal end — 50 ms out of 32 s. Trimming
+rather than relabelling, because the contract this module and codameter both
+publish is a *symmetric* two-sided axis. After it, ZZ is symmetric to 1.8e-08
+about the centre and EN is asymmetric at 1.27, which is correct: a
+cross-component correlation has no reason to be symmetric.
+
+**Why it hid.** The mean removal deletes the delta at true zero lag, so `argmax`
+sits on the neighbouring sample — the midpoint. Reading that as "the
+autocorrelation peaks at zero lag" confirms the wrong index, which is exactly
+the mistake recorded and corrected in §6 above.
+
+**What it cost the science: almost nothing.** Re-running all 12 dv/v products
+on the corrected axis, 11 are bit-identical and CI.LJR 1–2 Hz moves by 0.0005 %
+rms, 0.7 % of its own signal. Stretching compares each day against a reference
+built from the same data on the same axis, so a constant offset very nearly
+cancels. The fix matters for what the stored axis *means* — the coda window,
+anything reading the Parquet directly, and any future cross-station work where
+the offset would not cancel — not for these dv/v curves.
 
 ### A second defect the two-year run found: overlapping shards
 

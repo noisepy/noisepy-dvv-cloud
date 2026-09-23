@@ -22,7 +22,7 @@ One row per station-day-component-pair (daily linear stack of all correlation wi
 | `location` | string | `""` when empty (not `--`) |
 | `pair` | string | partition key; `EN, EZ, NZ` (+ `EE, NN, ZZ` autocorrs) |
 | `date` | date32 | UTC day |
-| `ccf` | list\<float32\> | two-sided, length `2*maxlag_s*fs + 1`, lag axis symmetric about 0 |
+| `ccf` | list\<float32\> | two-sided, length `2*maxlag_s*fs + 1` **as NoisePy returns it**, whose true zero lag sits at index `n // 2 + 1`, not the midpoint. Read it with `parquet_io.read_ccf_matrix`, which trims to a genuinely symmetric window centred on zero lag (`2*maxlag_s*fs - 1` samples) and returns the matching axis. |
 | `fs` | float32 | Hz (40.0 for the standard recipe) |
 | `maxlag_s` | float32 | seconds (32.0) |
 | `nwindows` | int32 | 30-min windows stacked into this day (QC: low = gappy day) |
