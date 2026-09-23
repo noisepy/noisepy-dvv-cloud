@@ -56,3 +56,6 @@ id_ed25519*
 
 # Logs can carry tokens, presigned URLs and account identifiers in tracebacks.
 *.log
+
+# generated dashboards (megabytes of embedded PNG)
+reports/

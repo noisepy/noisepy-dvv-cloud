@@ -1,0 +1,32 @@
+# The unit tests were runnable and never run. That mattered once
+# tests/test_cloud_spec.py started carrying invariants rather than arithmetic:
+# "the job role grants no s3:Delete*" is only a guard if something checks it on
+# every change, and neither pre-commit nor any other workflow ran pytest.
+#
+# The dvv environment, not correlate: it is the one the tests import (pandas 2,
+# codameter), and it solves in well under a minute from the committed lock.
+# `locked: true` fails rather than re-solving, so CI runs the same versions as
+# the laptop.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          environments: dvv
+          locked: true
+      - run: pixi run -e dvv pytest tests/ -q
+      - name: ruff
+        run: pixi run -e dvv ruff check .

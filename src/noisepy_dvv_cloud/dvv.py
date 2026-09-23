@@ -3,8 +3,10 @@
 Reads the Parquet CCF dataset, runs a deterministic processing ENSEMBLE per
 station and band — the baseline config from codameter.use_cases plus four
 perturbations (stack length halved/doubled, coda window shifted later,
-reference scheme swapped) — combines cross-components per member, then feeds
-the members to codameter.uq_measurement.processing_ensemble. The reported
+reference scheme swapped) — combines cross-components per member, then aggregates
+the members by the law of total variance (`ensemble` below, which reproduces
+codameter.uq_measurement.processing_ensemble on a complete ensemble and does
+not discard the survivors when one member is missing). The reported
 uncertainty separates:
 
   dvv_err_within  — per-epoch coherence floor (Weaver/Clarke 2011)
@@ -161,6 +163,64 @@ def _codameter_is_physical(version: str) -> bool:
     return v >= Version("0.4")
 
 
+def ensemble(
+    members: dict[str, np.ndarray],
+    within: dict[str, np.ndarray],
+    min_members: int = 2,
+) -> tuple[np.ndarray, ...]:
+    """Law of total variance across processing choices, tolerant of a member
+    that produced nothing at some epochs.
+
+    Returns (mean, within_std, method_std, total_std, n_members).
+
+    IDENTICAL to codameter.uq_measurement.processing_ensemble wherever every
+    member is finite -- tests/test_dvv_ensemble.py asserts that against
+    codameter itself rather than against a transcription of it. The two differ
+    only where a member is missing, and there codameter's
+
+        mean = stack.mean(axis=0)
+        method_std = stack.std(axis=0, ddof=1)
+        within_var = (wstack ** 2).mean(axis=0)
+
+    makes all four outputs NaN at that epoch, discarding every member that did
+    succeed. Found on the CI.LJR smoke run, 2026-09-22: reference="moving"
+    returns nothing on a ten-day series, which NaN-ed four working members at
+    every epoch in all four bands while `n_members` still reported 4. A product
+    that says four members contributed and carries no measurement is
+    self-inconsistent, and DVV_SCHEMA has always carried a per-epoch member
+    count -- so honouring it here is a fix, not a change of method.
+
+    `min_members` is 2 because the headline uncertainty is
+    sqrt(within^2 + method^2), and with a single surviving member the
+    methodological term is unknown rather than zero. Reporting such an epoch
+    would understate the error, so it is dropped and `n_members` records why.
+    """
+    labels = list(members)
+    stack = np.vstack([np.asarray(members[k], dtype=float) for k in labels])
+    wstack = np.vstack(
+        [np.asarray(within.get(k, np.zeros(stack.shape[1])), dtype=float)
+         for k in labels]
+    )
+    ok = np.isfinite(stack) & np.isfinite(wstack)
+    n = ok.sum(axis=0)
+    enough = n >= max(min_members, 1)
+
+    def _nanmean(a):
+        tot = np.where(ok, a, 0.0).sum(axis=0)
+        return np.divide(tot, n, out=np.full(n.shape, np.nan, float), where=n > 0)
+
+    mean = np.where(enough, _nanmean(stack), np.nan)
+    # sample variance over the surviving members only, ddof=1 as codameter uses
+    dev2 = np.where(ok, (stack - mean) ** 2, 0.0).sum(axis=0)
+    method_var = np.divide(
+        dev2, n - 1, out=np.full(n.shape, np.nan, float), where=n > 1
+    )
+    within_var = np.where(enough, _nanmean(wstack**2), np.nan)
+    method_std = np.where(enough, np.sqrt(method_var), np.nan)
+    total_std = np.where(enough, np.sqrt(within_var + method_var), np.nan)
+    return mean, np.sqrt(within_var), method_std, total_std, n.astype("int32")
+
+
 def station_dvv(
     data: dict,
     days: np.ndarray,
@@ -173,7 +233,7 @@ def station_dvv(
     from codameter.deviations import run_pipeline
 
     _CODAMETER_PHYSICAL = _codameter_is_physical(_codameter_version)
-    from codameter.uq_measurement import processing_ensemble, weaver_stretching_error
+    from codameter.uq_measurement import weaver_stretching_error
 
     cfg, eps = dvv_config(use_case, band)
     f_center = float(np.sqrt(band[0] * band[1]))
@@ -229,17 +289,16 @@ def station_dvv(
         if label == "baseline":
             baseline_cc = m_cc
 
-    res = processing_ensemble(members, within_sigma=within)
-    n_members = np.isfinite(np.vstack(list(members.values()))).sum(axis=0)
+    mean, within_std, method_std, total_std, n_members = ensemble(members, within)
 
     return pd.DataFrame(
         {
             "date": pd.to_datetime(days).date,
-            "dvv": res.mean * 100.0,  # fraction -> percent
-            "dvv_err": res.total_std * 100.0,
-            "dvv_err_within": res.within_std * 100.0,
-            "dvv_err_method": res.methodological_std * 100.0,
+            "dvv": mean * 100.0,  # fraction -> percent
+            "dvv_err": total_std * 100.0,
+            "dvv_err_within": within_std * 100.0,
+            "dvv_err_method": method_std * 100.0,
             "cc": baseline_cc,
-            "n_members": n_members.astype("int32"),
+            "n_members": n_members,
         }
     )

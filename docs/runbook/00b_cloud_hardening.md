@@ -162,9 +162,9 @@ created**. 4–5 can follow while the correlate stage drains.
 
 | # | Port | From QuakeScope | Why it matters here |
 |---|---|---|---|
-| 1 | `scripts/scope_iam.py` | `scripts/scope_batch_role_s3.py` | Creates the `DvvCloudExecutionRole` / `DvvCloudBatchRole` split, attaches the scoped policy before detaching `AmazonS3FullAccess`, simulates before/after with a negative control |
-| 2 | Bucket versioning + lifecycle at creation | `preflight.py::check_bucket` | Cheaper at `aws s3 mb` time than retrofitted; the only real protection against a bad delete |
-| 3 | `scripts/preflight.py` | `scripts/preflight.py` | Roles, images, bucket versioning, queue state. Exit 0 only if nothing FAILs; reports `UNKNOWN` when AWS is unreachable, because absence of evidence must not read as evidence of safety |
+| 1 | **done** — [`scripts/scope_iam.py`](../../scripts/scope_iam.py) | `scripts/scope_batch_role_s3.py` | Creates the `DvvCloudExecutionRole` / `DvvCloudBatchRole` split and the scoped one-bucket policy, simulates both roles against a negative control. Departs from the original in two ways: it creates new roles rather than narrowing a shared one, and it grants **no delete at all** |
+| 2 | **done** — [`scripts/create_bucket.py`](../../scripts/create_bucket.py) + [`bucket.py`](../../src/noisepy_dvv_cloud/bucket.py) | `preflight.py::check_bucket` | Versioning, public-access blocks, SSE-S3, lifecycle — set at creation, because versioning only covers objects written after it is enabled. The spec and the check live in one module so they cannot drift |
+| 3 | **done** — [`scripts/preflight.py`](../../scripts/preflight.py) | `scripts/preflight.py` | Roles, images, bucket versioning, Batch objects, and whether the tracked configs still hold account detail. Exit 0 only if nothing FAILs; reports `UNKNOWN` when AWS is unreachable, because absence of evidence must not read as evidence of safety |
 | 4 | `costs_actual.json` + Batch-runtime estimator | `costs_actual.json`, `scripts/campaign_spend.py` | **Replaces** Gate 2 rather than deferring it. Split spend into work that produced products and work that did not — a single total hides the thing worth knowing |
 | 5 | `scripts/spot_governor.py` | `scripts/spot_governor.py` | See below — this one is not optional for the 2-year run |
 
@@ -242,7 +242,7 @@ the current tree.
 | Full history | `detect-secrets` over all 21 commits on every ref (`git archive` per commit) | **0 findings** |
 | Full history | regex sweep for `AKIA`/`ASIA`/`A3T*`, PEM headers, `aws_secret_access_key`, `xox*`, `ghp_`, `github_pat_`, `sk-`, JWTs | **0 findings** |
 | Sensitive filenames | every path ever added on any branch, filtered for `.env`/`.pem`/`.key`/`credentials`/`id_rsa`/`.tfstate` | **none ever committed** |
-| Account identifiers | `073795725844` / `897729121516` across all history | **never committed** — docs use `ACCOUNT_ID` |
+| Account identifiers | this account's and the legacy account's 12-digit ids, across all history | **never committed** — docs use `ACCOUNT_ID`, and this row deliberately does not spell them out either |
 | GitHub Actions | `.github/workflows/docker.yml` | only `secrets.GITHUB_TOKEN`; `permissions:` least-privilege (`contents: read`, `packages: write`); **no AWS credentials, no OIDC role** |
 | Repo settings | `actions/secrets`, `actions/variables` | **0 secrets, 0 variables** — nothing to leak |
 | Container images | both Dockerfiles | no `ENV`/`ARG` secrets; explicit `COPY pyproject.toml README.md` + `COPY src`, never `COPY . .` |
@@ -346,25 +346,72 @@ through the API; the local token's scopes are
 `admin:public_key, gist, read:org, repo`, so this is a web-UI action:
 **GitHub → Packages → noisepy-dvv-cloud → Package settings → Change visibility.**
 
-## 5. Open decisions
+## 5. Decisions, and the evidence that settled them — 2026-09-22
 
-Neither should be guessed; both were put to the user and are unanswered.
+Both were open; neither was guessed.
 
-1. **Scope now** — port all five items, or just 1–3 (credentials/safety
-   foundation) and leave cost tracking + governor until after the correlate run
-   is submitted?
-2. **Role naming** — create new `DvvCloudBatchRole` / `DvvCloudExecutionRole`,
-   or scope `NoisePyBatchRole` in place? New roles are preferable because
-   `NoisePyBatchRole` may have consumers outside this project that cannot be
-   seen from here; scoping it in place would break them silently.
+**1. Scope — items 1–3 now, 4–5 after the correlate stage is submitted.**
+Items 1–3 gate the first job: nothing can be launched safely without the roles,
+the bucket and a check. Cost tracking (item 4) has nothing to measure until
+jobs run, and the Spot governor (item 5) matters over a two-year campaign, not
+over a ten-day smoke test.
+
+**2. Role naming — new `DvvCloud*` roles, not `NoisePyBatchRole` scoped in
+place.** The concern was that the legacy role might have consumers invisible
+from here. It does: it is the `jobRoleArn` on **both revisions of
+`niyiyu-noisepy-scedc-2022`**, and on nothing else on the account. Narrowing it
+would change what those jobs can do without telling their owner. Roles cost
+nothing.
+
+Simulated read-only against that role on 2026-09-22, using the same check list
+`scope_iam.py` applies to the new one — this is the "before" row set that §3
+step 3 asks for:
+
+| action | resource | decision |
+|---|---|---|
+| `s3:ListBucket`, `s3:GetBucketLocation`, `s3:ListBucketMultipartUploads` | the products bucket | allowed (wanted) |
+| `s3:GetObject`, `s3:PutObject`, `s3:AbortMultipartUpload`, `s3:ListMultipartUploadParts` | a product object | allowed (wanted) |
+| `s3:DeleteObject`, `s3:DeleteObjectVersion` | a product object | **allowed — not wanted** |
+| `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` | `scoped-noise/anything` | **allowed — not wanted** |
+| `s3:ListBucket` | `scoped-noise` | **allowed — not wanted** |
+| `secretsmanager:GetSecretValue` | a secret ARN | implicitDeny (wanted) |
+
+Six of fourteen rows wrong, all of them `AmazonS3FullAccess` reaching past the
+one bucket this campaign uses.
+
+**3. Public vs private subnets — public, decided rather than inherited.** §4
+flagged VPC endpoints as an unchecked rule. Checked 2026-09-22: QuakeScope's
+`niyiyu-noisepy-scedc` compute environment sits in the account's **default
+VPC**, whose single main route table sends `0.0.0.0/0` to an internet gateway,
+so all four of its subnets are public. **The account has no NAT gateways and no
+VPC endpoints at all.** The NAT data-processing charge that motivates interface
+endpoints therefore cannot be incurred, and `assignPublicIp: ENABLED` in both
+job definitions matches the pattern already proven on this account. An S3
+gateway endpoint is free and still worth adding; it is a refinement, not a
+blocker.
+
+**4. Permission boundaries — not used, deliberately.** §4 flagged them as the
+second unchecked agent rule. The rule is about job roles that share a compute
+environment; `dvvcloud2026_env` is this project's alone, and the roles it uses
+are new and reach one bucket. What a boundary would actually buy is a cap on
+future careless grants — and `scripts/preflight.py` already catches that, by
+simulating the denials on every run rather than trusting that nobody attached
+`AmazonS3FullAccess` later. A control that runs beats a control that is
+configured. Revisit if a second pipeline is ever pointed at these roles.
 
 ---
 
-## 6. State as of 2026-09-11
+## 6. State as of 2026-09-22
 
-**Repo.** `main` = `57eed51`, with PR #3 (pixi environments, Gate 1 comparison
-fixes, cross-component masking, credential hygiene) and PR #4 (fallback coda
-window) both merged. Merged local branches pruned.
+**Repo.** `main` = `986b668`. PR #3 (pixi environments, Gate 1 comparison
+fixes, cross-component masking, credential hygiene), PR #4 (fallback coda
+window), PR #5 (this document) and PR #6 (automated secret scanning, the
+`image-pullable` check) all merged. Merged local branches pruned.
+
+**Launch blocker cleared.** `ghcr.io/noisepy/noisepy-dvv-cloud` was made public
+on 2026-09-22. Both tags return HTTP 200 to an anonymous pull token, and the
+`image-pullable` job in the `security` workflow passes as a hard check on
+`main` — so a Fargate task can pull what a campaign would launch.
 
 **Open work.**
 
@@ -391,9 +438,239 @@ source): a pure per-band constant, independent of `cc` — **2.16x** at 1–2 Hz
 correction changes **only** the error columns, never dv/v. Gate 1 gates on
 `r > 0.9` of the dv/v series and is unaffected either way.
 
-**AWS.** Nothing for this project exists yet: no `dvvcloud*` compute
-environment, queue or job definition, and no output bucket. The only Batch
-objects on the account are the legacy `niyiyu-noisepy-scedc` ones. `configs/`
-still has six `[REQUIRED]` placeholders across three files (subnets, security
-group, and the role ARN four times). Fill `*.local.yaml` copies — the tracked
-skeletons stay templates, and `.gitignore` covers that suffix.
+**AWS — created 2026-09-22, `preflight.py` exit 0.** Everything Phase 1 calls
+for now exists:
+
+| object | name | note |
+|---|---|---|
+| products bucket | `denolle-dvv-cloud-2026` | us-west-2; versioning, all four public-access blocks, SSE-S3, lifecycle `dvvcloud-version-hygiene` |
+| job role | `DvvCloudBatchRole` | inline `DvvCloudProductsS3`, one bucket, no delete |
+| execution role | `DvvCloudExecutionRole` | `AmazonECSTaskExecutionRolePolicy` only |
+| compute environment | `dvvcloud2026_env` | FARGATE_SPOT, ENABLED/VALID, maxvCpus 256 |
+| job queue | `dvvcloud2026_queue` | ENABLED/VALID |
+| job definitions | `dvvcloud2026_correlate:1`, `dvvcloud2026_dvv:1` | both on the `DvvCloud*` role pair |
+
+Networking: the four public subnets of the default VPC (`us-west-2a`–`d`,
+`MapPublicIpOnLaunch: true`) and the default security group, which allows all
+egress and no ingress from outside itself. The filled values live in
+`configs/*.local.yaml`, which `.gitignore` covers; the six `[REQUIRED]`
+placeholders in the tracked YAMLs are untouched, and `preflight.py` checks that
+they stay that way.
+
+**The account's `aws` binary is CLI 2.0.34 (2020) and rejects
+`--no-cli-pager`.** Use `pixi run -e ops aws ...`, which is 2.36.24. That is
+the second reason the `ops` environment exists, alongside the ruamel-yaml pin
+conflict.
+
+**§3 step 6 — done 2026-09-22.** Both stages ran end to end on CI.LJR (Lake
+Hughes, the Clements-Denolle 2022 reference station), 2023.001–2023.011, from
+`station_lists/smoke_ljr.txt`:
+
+| job | exit | queue→start | run | resources |
+|---|---|---|---|---|
+| `correlate_20260922115411_0` | 0 | 59 s | 81 s | 2 vCPU / 16 GB |
+| `dvv_20260922115751_0` | 0 | 53 s | 26 s | 2 vCPU / 8 GB |
+
+What each one proves, which is why both were needed:
+
+- **correlate** reached `RUNNING` 60 s after submission, so `DvvCloudExecutionRole`
+  pulled the public ghcr image with no `CannotPullContainerError`, read
+  `scedc-pds` anonymously, and wrote under `DvvCloudBatchRole`.
+- **dvv** read the CCFs back out of the products bucket, which is the only
+  thing that exercises the job role's `s3:GetObject`. correlate never does —
+  it reads the archive anonymously and only writes.
+
+Products: six CCF Parquet shards (`EE EN EZ NN NZ ZZ`, the `acorr_only` upper
+triangle) and four dv/v tables, one per octave band. The CCFs check out
+physically: lag axis exactly 2561 samples = 2 x 32 s x 40 Hz + 1, 100 % finite,
+all ten days present, and the ZZ autocorrelation symmetric about its zero lag.
+
+> **Corrected 2026-09-23.** This paragraph first read "the ZZ autocorrelation
+> peaks at the zero-lag sample on nine of ten days". It does peak one sample
+> from the axis midpoint, but that is a coincidence of two errors and not a
+> validation — see "The lag axis is off by one" below. Symmetry is the property
+> that actually identifies zero lag on an autocorrelation.
+
+`nwindows` runs 71–121 against the
+~189 a gapless day would give, so LJR has real gaps in that window — worth
+watching on the campaign, not a blocker.
+
+Object versioning is live on the products: every key carries a `VersionId`.
+
+**Do not read a dollar figure into those runtimes.** Cost Explorer is denied by
+SCP `p-q1ngvul9` (§1.2), and one 10-day shard amortises container start and the
+StationXML catalogue load differently from a 30-day campaign shard. 8 s per
+station-day is a first data point, not a rate. The estimator that turns Batch
+start/stop times into spend is §4 item 4 and is still unported.
+
+### The defect the smoke test found
+
+**dv/v came back NaN on all ten days in all four bands, while `cc` was 0.91 to
+1.00 and `n_members` said 4.** A product that reports four contributing members
+*and* a NaN measurement is self-inconsistent, which is what makes this worth
+chasing rather than filing under "ten days is too short".
+
+Reproduced locally against the same S3 CCFs, per ensemble member, band 2–4 Hz:
+
+| member | config change | finite dv/v |
+|---|---|---|
+| `baseline` | — | 10/10 |
+| `stack_half` | stack 90 → 45 | 10/10 |
+| `stack_double` | stack 90 → 180 | 10/10 |
+| `window_late` | coda window +25 % | 10/10 |
+| `ref_swap` | reference `fixed` → `moving` | **0/10** |
+
+Four members produced a measurement on every epoch. `stack_double` asks for 180
+days of history and still returns finite values from ten, so the stack-length
+members degrade gracefully. **`reference: "moving"` does not** — it returns
+nothing at all on a series this short.
+
+The failure is then arithmetic: `processing_ensemble` takes `stack.mean(axis=0)`,
+a plain mean, so a single all-NaN member makes the ensemble mean NaN at *every*
+epoch. Measured on these ten days: plain mean 0/10 finite, `np.nanmean` 10/10.
+
+**Why this matters beyond a short smoke test.** It is not "ten days is too
+short" — it is "one failing member silently discards the other four". On the
+campaign that costs the leading epochs of every station, for however long the
+moving reference needs to spin up, and it would cost any isolated epoch where
+one member happens to fail. `compare_cd2022.py` drops a 150-day burn-in, so
+Gate 1 may well never see it, which is the bad case: a silent loss that the
+gate is blind to.
+
+**Fixed 2026-09-23, as a bug rather than a change of method.** The deciding
+detail: `DVV_SCHEMA` has always carried a per-epoch `n_members`, so the schema
+already anticipated a varying member count and only the aggregation failed to
+honour it. `dvv.ensemble` now computes the same law of total variance over the
+members that survived each epoch, and drops an epoch with fewer than two,
+because the methodological term is then unknown rather than zero.
+
+`tests/test_dvv_ensemble.py` pins both halves against codameter itself: the
+result must match `processing_ensemble` exactly on a complete ensemble, and
+must NOT match it when a member is missing. The second test asserts codameter's
+own all-NaN behaviour, so a future codameter that fixes this upstream fails the
+test loudly instead of letting us keep duplicated work.
+
+**What the fix was actually worth.** On the two-year run `ref_swap` produces 625
+of 670 epochs at 2-4 Hz, so the moving reference works once it has history and
+fails only while spinning up. Without the fix those 45 epochs would have been
+NaN in every band at every station; with it they carry `n_members = 4`. The
+ten-day smoke case was the extreme of the same defect, not a separate one.
+
+Nothing blocked the correlate campaign either way: the correlate stage never
+imports codameter (§6, sequencing).
+
+### Is the spectral mean removed for autocorrelations? Yes — and the lag axis is off by one
+
+Asked 2026-09-23, answered by reading `noise_module.py` and then measuring.
+
+**The mean removal is not skipped.** `noise_module.correlate` subtracts the
+frequency-domain mean in all three of its branches, ours included
+(`substack=False`, the final `else`):
+
+```python
+crap[:Nfft2] = np.mean(corr[tindx], axis=0)
+crap[:Nfft2] = crap[:Nfft2] - np.mean(crap[:Nfft2], axis=0)
+```
+
+Verified by reproducing that branch exactly (`np.allclose` against NoisePy's
+own output) and toggling the one line: it removes a pure delta at true zero
+lag, amplitude equal to the spectral mean, with the next-largest change 500x
+smaller. Its comment in the sibling branches says as much — "remove the mean in
+freq domain (spike at t=0)".
+
+What **is** conditional on autocorrelation is a different line,
+`crap[0] = complex(0, 0)`, guarded by `if x_corr` with the comment "this only
+if fft1 is different than fft2". It zeroes the DC bin, and it does not exist at
+all in the `substack=False` branch we use. For us that is moot twice over: DC is
+already zeroed in `whiten_1D`, which sets `spec_out[0:ix00] = 0` for everything
+below `freqmin`, and `freqmin` is 0.5 Hz.
+
+So: mean of the spectrum, removed. DC, removed upstream. The dominant zero-lag
+energy in our gathers is what survives both, which is why the dashboard scales
+each row by its coda rather than its peak.
+
+**The lag axis, however, is off by one sample.** `correlate` builds the trace
+with `ifftshift(ifft(crap, Nfft))`, putting zero lag at index `Nfft/2` of an
+`Nfft`-sample array, then trims with an axis that has only `Nfft - 1` entries:
+
+```python
+t   = np.arange(-Nfft2 + 1, Nfft2) * dt      # Nfft - 1 entries
+ind = np.where(np.abs(t) <= maxlag)[0]       # indexed into length-Nfft data
+```
+
+Every returned sample is therefore labelled one lag too large, and true zero
+lag lands at index `n // 2 + 1` rather than the midpoint.
+
+Measured on the campaign's own products (CI.LJR, 2022–2023, 2561 lags) — an
+autocorrelation is symmetric about true zero lag and nothing else:
+
+| centre | ZZ | EE | NN |
+|---|---|---|---|
+| 1279 | 5.0e-01 | 5.0e-01 | 5.0e-01 |
+| 1280 (our old t = 0) | 4.3e-01 | 4.3e-01 | 4.3e-01 |
+| **1281** | **1.8e-08** | **1.8e-08** | **1.9e-08** |
+
+`parquet_io.center_on_zero_lag` now trims to a symmetric window centred on true
+zero lag, costing two samples at the acausal end — 50 ms out of 32 s. Trimming
+rather than relabelling, because the contract this module and codameter both
+publish is a *symmetric* two-sided axis. After it, ZZ is symmetric to 1.8e-08
+about the centre and EN is asymmetric at 1.27, which is correct: a
+cross-component correlation has no reason to be symmetric.
+
+**The index is measured, not assumed.** The first version of this fix hard-coded
+`n // 2 + 1` against the pinned `noisepy-seis==0.9.93`, which would have gone
+silently wrong the day that pin moved. `measure_zero_lag_index` instead finds
+the symmetry centre of an autocorrelation at read time and
+`read_ccf_matrix` caches it per station. Reading a cross-component pair sends it
+to probe one row of EE, NN or ZZ for the same station — one extra row read per
+station per process.
+
+Three things make it safe rather than clever:
+
+- it searches only ±3 samples around the midpoint, so a noisy trace cannot lock
+  onto a spurious symmetry somewhere else;
+- it demands the winner score 100x better than the runner-up, and returns
+  "unsure" otherwise. Real products score ~1e-8 against ~4e-1, so the test is
+  decisive rather than a best fit;
+- unsure, or no autocorrelation to measure from, falls back to the documented
+  constant **and logs why**. A measurement that disagrees with the constant also
+  logs, and the measurement wins.
+
+Measured on the campaign products it returns 1281, the same as the constant, so
+no dv/v product changed. `tests/test_lag_axis.py` covers the part that matters:
+it plants traces centred at `n//2 - 1`, `n//2` and `n//2 + 2` and asserts each
+is found, so a NoisePy with a different convention is followed rather than
+overridden; and it asserts the measurement **declines** on a cross-correlation
+and on a dead trace.
+
+**Why it hid.** The mean removal deletes the delta at true zero lag, so `argmax`
+sits on the neighbouring sample — the midpoint. Reading that as "the
+autocorrelation peaks at zero lag" confirms the wrong index, which is exactly
+the mistake recorded and corrected in §6 above.
+
+**What it cost the science: almost nothing.** Re-running all 12 dv/v products
+on the corrected axis, 11 are bit-identical and CI.LJR 1–2 Hz moves by 0.0005 %
+rms, 0.7 % of its own signal. Stretching compares each day against a reference
+built from the same data on the same axis, so a constant offset very nearly
+cancels. The fix matters for what the stored axis *means* — the coda window,
+anything reading the Parquet directly, and any future cross-station work where
+the offset would not cancel — not for these dv/v curves.
+
+### A second defect the two-year run found: overlapping shards
+
+The dv/v stage died on `ValueError: All arrays must be of the same length` from
+a DataFrame constructor, two stages away from the cause. `run_pipeline` had
+returned 670 epochs against a 660-day axis.
+
+Shard files are content-hash-named, so the documented idempotence ("re-run the
+identical command") holds for an identical command and **not** for a different
+sharding. The ten-day smoke shard and the thirty-day campaign shard both cover
+2023-01-01..10; neither overwrote the other, both landed in the dataset, and
+`read_ccf_matrix` stacked all of them — ten extra rows in a 660-day matrix.
+
+`parquet_io.read_ccf_matrix` now collapses duplicate days, keeping the one
+stacked from the most windows, and logs how many it dropped. Same code and
+config produce the same CCF for a day, so the duplicates agree; where they do
+not, more windows is the better product. `tests/test_parquet_dedup.py` covers
+it. Nothing else in the pipeline could have caught this, and the error message
+never mentions shards.

@@ -36,31 +36,100 @@ Prefix every command below with `pixi run -e correlate` or `pixi run -e dvv`.
 it below 0.18, and the correlate solve fails outright if they share an environment. If
 you already have `aws` on `PATH`, ignore `ops` entirely.
 
-## Phase 1 — AWS objects
+## Phase 1 — AWS objects (done 2026-09-22)
+
+All four steps below have been run; `scripts/preflight.py` exits 0. The object
+names and the networking actually used are recorded in
+[00b_cloud_hardening.md](00b_cloud_hardening.md) §6. Keep the instructions —
+they are how the account is reproduced, and every script is idempotent.
+
+Note: this account's system `aws` is CLI 2.0.34 and rejects `--no-cli-pager`.
+Run the `aws batch` commands through `pixi run -e ops aws ...`.
+
+Four steps, in this order. The three scripts each take `--check` (read-only)
+as well as `--apply`, and each is idempotent, so a re-run after changing a
+constant is the supported way to change the account rather than a console
+click.
+
+**1. The products bucket, with its protections on from the first object.**
+Versioning only covers objects written *after* it is enabled, so this cannot be
+retrofitted once there are products worth protecting. Pick the name once — S3
+names are global and every product path carries it forever.
 
 ```bash
-aws s3 mb s3://denolle-dvv-cloud-2026 --region us-west-2
+export DVV_OUTPUT_BUCKET=denolle-dvv-cloud-2026
+pixi run -e ops python scripts/create_bucket.py --check    # nothing yet
+pixi run -e ops python scripts/create_bucket.py --apply
+```
 
+Sets versioning, all four public-access blocks, SSE-S3 default encryption, and
+a lifecycle rule that expires noncurrent versions at 30 days, aborts incomplete
+multipart uploads at 7, and clears orphaned delete markers. Current versions
+never expire — they are the deliverable. What and why:
+[`src/noisepy_dvv_cloud/bucket.py`](../../src/noisepy_dvv_cloud/bucket.py).
+
+**2. The two IAM roles.** Not `NoisePyBatchRole`: that role is the live
+`jobRoleArn` on both revisions of `niyiyu-noisepy-scedc-2022`, so narrowing it
+would change what somebody else's jobs can do without telling them.
+
+```bash
+pixi run -e ops python scripts/scope_iam.py --check    # roles do not exist yet
+pixi run -e ops python scripts/scope_iam.py --apply
+```
+
+Creates `DvvCloudBatchRole` (the job role: one bucket, read and write, **no
+delete**) and `DvvCloudExecutionRole` (the platform role: pull the image, open
+the log stream, no S3 at all), then simulates both against a negative control
+and prints the two `export` lines for `parameters.py`:
+
+```bash
+export DVV_JOB_ROLE_ARN=arn:aws:iam::ACCOUNT_ID:role/DvvCloudBatchRole
+export DVV_EXECUTION_ROLE_ARN=arn:aws:iam::ACCOUNT_ID:role/DvvCloudExecutionRole
+```
+
+**3. Batch objects.** Networking first — the compute environment needs subnets
+and a security group:
+
+```bash
 aws ec2 describe-subnets --query 'Subnets[].SubnetId' --output text
 aws ec2 describe-security-groups --filters Name=group-name,Values=default \
   --query 'SecurityGroups[].GroupId' --output text
 ```
 
-No IAM work: put `arn:aws:iam::ACCOUNT_ID:role/NoisePyBatchRole` into both
-`jobRoleArn` and `executionRoleArn`. No bucket policy either — see
-[03_batch_setup.md](03_batch_setup.md).
+Those subnets are in the **default VPC**, whose only route table sends
+`0.0.0.0/0` to an internet gateway, so they are public — which is what
+`assignPublicIp: ENABLED` in both job definitions expects. There is no NAT
+gateway on this account, so the usual argument for S3 VPC endpoints (NAT
+data-processing charges at fan-out scale) does not apply here. An S3 gateway
+endpoint is still free and worth adding later; it is not a blocker.
 
-Fill the `''  # [REQUIRED]` placeholders in `configs/`, set `OUTPUT_BUCKET` in
-`parameters.py`, then:
+Copy the templates before filling them — the tracked YAMLs stay templates, and
+`.gitignore` covers the `*.local.yaml` suffix:
 
 ```bash
-aws batch create-compute-environment --no-cli-pager --cli-input-yaml file://configs/compute_environment.yaml
-aws batch create-job-queue          --no-cli-pager --cli-input-yaml file://configs/job_queue.yaml
-aws batch register-job-definition   --no-cli-pager --cli-input-yaml file://configs/job_definition_correlate.yaml
-aws batch register-job-definition   --no-cli-pager --cli-input-yaml file://configs/job_definition_dvv.yaml
+for f in compute_environment job_queue job_definition_correlate job_definition_dvv; do
+  cp configs/$f.yaml configs/$f.local.yaml
+done
+# fill subnets, security group, and the two role ARNs, then:
+aws batch create-compute-environment --no-cli-pager --cli-input-yaml file://configs/compute_environment.local.yaml
+aws batch create-job-queue          --no-cli-pager --cli-input-yaml file://configs/job_queue.local.yaml
+aws batch register-job-definition   --no-cli-pager --cli-input-yaml file://configs/job_definition_correlate.local.yaml
+aws batch register-job-definition   --no-cli-pager --cli-input-yaml file://configs/job_definition_dvv.local.yaml
 ```
 
-Images are x86-only (obspy ships no linux/aarch64 wheels):
+**4. Check the whole thing before submitting anything.**
+
+```bash
+pixi run -e ops python scripts/preflight.py
+```
+
+Exit 0 only if nothing FAILs. It reads roles, bucket, Batch objects and image
+back from AWS rather than from `configs/`, so it catches a job definition that
+points at the wrong role — the failure mode that otherwise shows up as
+`ResourceInitializationError` at task start.
+
+Images are x86-only (obspy ships no linux/aarch64 wheels) and are built by the
+`docker` GitHub Action on every push to `main`. To build by hand:
 
 ```bash
 docker buildx build --platform linux/amd64 -f docker/Dockerfile.correlate \
