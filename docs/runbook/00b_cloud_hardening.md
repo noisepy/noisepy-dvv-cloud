@@ -530,15 +530,43 @@ one member happens to fail. `compare_cd2022.py` drops a 150-day burn-in, so
 Gate 1 may well never see it, which is the bad case: a silent loss that the
 gate is blind to.
 
-**Not fixed here — it is a method decision, not a bug fix.** Three routes:
+**Fixed 2026-09-23, as a bug rather than a change of method.** The deciding
+detail: `DVV_SCHEMA` has always carried a per-epoch `n_members`, so the schema
+already anticipated a varying member count and only the aggregation failed to
+honour it. `dvv.ensemble` now computes the same law of total variance over the
+members that survived each epoch, and drops an epoch with fewer than two,
+because the methodological term is then unknown rather than zero.
 
-1. Drop all-NaN members before calling `processing_ensemble`. Cheapest, fixes
-   exactly the `ref_swap` case, and `n_members` already records what happened.
-2. Mask per epoch rather than per member. More faithful, but the methodological
-   variance is then computed over a member count that varies with epoch.
-3. Treat it as upstream: `processing_ensemble` arguably wants `nanmean` when it
-   is handed `within_sigma`. That would ride along with the codameter 0.5 pin
-   bump, which is already pending for the Weaver band-form change.
+`tests/test_dvv_ensemble.py` pins both halves against codameter itself: the
+result must match `processing_ensemble` exactly on a complete ensemble, and
+must NOT match it when a member is missing. The second test asserts codameter's
+own all-NaN behaviour, so a future codameter that fixes this upstream fails the
+test loudly instead of letting us keep duplicated work.
 
-Nothing blocks the correlate campaign either way: the correlate stage never
+**What the fix was actually worth.** On the two-year run `ref_swap` produces 625
+of 670 epochs at 2-4 Hz, so the moving reference works once it has history and
+fails only while spinning up. Without the fix those 45 epochs would have been
+NaN in every band at every station; with it they carry `n_members = 4`. The
+ten-day smoke case was the extreme of the same defect, not a separate one.
+
+Nothing blocked the correlate campaign either way: the correlate stage never
 imports codameter (§6, sequencing).
+
+### A second defect the two-year run found: overlapping shards
+
+The dv/v stage died on `ValueError: All arrays must be of the same length` from
+a DataFrame constructor, two stages away from the cause. `run_pipeline` had
+returned 670 epochs against a 660-day axis.
+
+Shard files are content-hash-named, so the documented idempotence ("re-run the
+identical command") holds for an identical command and **not** for a different
+sharding. The ten-day smoke shard and the thirty-day campaign shard both cover
+2023-01-01..10; neither overwrote the other, both landed in the dataset, and
+`read_ccf_matrix` stacked all of them — ten extra rows in a 660-day matrix.
+
+`parquet_io.read_ccf_matrix` now collapses duplicate days, keeping the one
+stacked from the most windows, and logs how many it dropped. Same code and
+config produce the same CCF for a day, so the duplicates agree; where they do
+not, more windows is the better product. `tests/test_parquet_dedup.py` covers
+it. Nothing else in the pipeline could have caught this, and the error message
+never mentions shards.

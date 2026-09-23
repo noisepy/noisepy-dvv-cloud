@@ -1,6 +1,6 @@
 # Smoke-test stations (SCEDC, broadband). Format: NET.STA.LOC, trailing dot = empty loc.
 # All three must exist in the Clements-Denolle 2022 archive for Gate 1 to be a
 # three-station check: ~/Dropbox/.../data/DVV-90-DAY-COMP/2.0-4.0/<NET>.<STA>.arrow
-CI.LJR.   # Lake Hughes — the Clements-Denolle 2022 reference station
+CI.LJR.   # Lone Juniper Ranch — the Clements-Denolle 2022 reference station
 CI.RXH.
 CI.ADO.   # replaces CI.PASC, which has no counterpart in the 2022 archive

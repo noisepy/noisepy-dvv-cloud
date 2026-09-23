@@ -1,4 +1,4 @@
-# Micro-smoke: one station, ten days. CI.LJR (Lake Hughes) because it is the
+# Micro-smoke: one station, ten days. CI.LJR (Lone Juniper Ranch) because it is the
 # Clements-Denolle 2022 reference station, so the same correlations feed Gate 1
 # later without recomputing anything.
 #

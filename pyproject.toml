@@ -85,10 +85,18 @@ noisepy-dvv-cloud = { path = ".", editable = true }
 [tool.pixi.feature.ops.dependencies]
 awscli = "*"
 
+# pygmt is separate for the same reason awscli is: GMT is a C library with its
+# own data stack (netCDF, GDAL), and it has no business in the solve for either
+# processing stage. The station map is written once to a PNG and the dashboard
+# embeds it, so `map` never has to satisfy codameter or noisepy.
+[tool.pixi.feature.map.dependencies]
+pygmt = "*"
+
 [tool.pixi.environments]
 correlate = ["correlate", "dev"]
 dvv = ["dvv", "dev"]
 ops = ["ops"]
+map = ["map"]
 
 # Sanity checks -- run both after any dependency change. `verify-dvv` prints the
 # codameter version because the sign convention depends on it.

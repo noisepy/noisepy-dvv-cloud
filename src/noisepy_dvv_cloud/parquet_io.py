@@ -6,11 +6,15 @@ this module in sync — the schemas are the public contract of this pipeline.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
+
+logger = logging.getLogger(__name__)
 
 CCF_SCHEMA = pa.schema(
     [
@@ -104,6 +108,31 @@ def read_ccf_matrix(
     df = table.to_pandas().sort_values("date")
     if df.empty:
         raise FileNotFoundError(f"no CCFs for {network}.{station} {pair} under {root}")
+
+    # Two shards can cover the same day. Shard files are content-hash-named, so
+    # a re-run with a DIFFERENT --day_group_size writes a new file instead of
+    # overwriting the old one and both land in the dataset: the documented
+    # idempotence holds for an identical command, not for a different sharding.
+    # Keeping both silently lengthens this matrix past its own date axis, and
+    # the failure surfaces much later and unrecognisably, as "All arrays must
+    # be of the same length" from a DataFrame constructor in dvv.station_dvv
+    # (found 2026-09-23: a 10-day smoke shard overlapped a 30-day campaign
+    # shard and added 10 rows to a 660-day series).
+    #
+    # Same code and config produce the same CCF for a day, so the duplicates
+    # agree; where they do not, the day stacked from more windows is the better
+    # product. config_hash breaks the remaining tie deterministically.
+    dup = int(df["date"].duplicated().sum())
+    if dup:
+        df = (
+            df.sort_values(["date", "nwindows", "config_hash"])
+            .drop_duplicates(subset="date", keep="last")
+            .sort_values("date")
+        )
+        logger.warning(
+            "%s.%s %s: %d duplicate day(s) from overlapping shards; kept the "
+            "one with the most windows stacked", network, station, pair, dup
+        )
     fs = float(df["fs"].iloc[0])
     ccfs = np.vstack(df["ccf"].to_numpy()).astype(np.float64)
     nlag = ccfs.shape[1]

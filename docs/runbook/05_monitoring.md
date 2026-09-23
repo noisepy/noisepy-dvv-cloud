@@ -31,14 +31,27 @@ EOF
 
 ```bash
 export DVV_OUTPUT_BUCKET=denolle-dvv-cloud-2026
-pixi run -e dvv python scripts/dashboard.py --station CI.LJR -o reports/dashboard.html
+pixi run -e map python scripts/station_map.py --stations CI.LJR,CI.RXH,CI.ADO
+pixi run -e dvv python scripts/dashboard.py --stations CI.LJR,CI.RXH,CI.ADO
 ```
 
-One self-contained HTML file: the daily waveform gather (lag across, date down),
-the reference stack with its coda measurement window, and dv/v per octave band
-with uncertainty ribbons — the Clements-Denolle layout. No CDN and no JS
-charting library, so it cannot silently fail to load a script; rasters are PNG
-data URIs and the charts are inline SVG.
+One self-contained HTML file: a shaded-relief station map, the daily waveform
+gather (lag across, date down), the reference stack with its coda measurement
+window, and dv/v per octave band with uncertainty ribbons — the
+Clements-Denolle layout. Clicking a station switches every panel. No CDN and no
+JS charting library, so it cannot silently fail to load a script; rasters are
+PNG data URIs and the charts are inline SVG.
+
+`station_map.py` is a separate step in a separate pixi environment because GMT
+is a C library with its own data stack, the same reason `awscli` sits in `ops`.
+It writes `map-light.png`, `map-dark.png` and `stations.json` into `reports/`;
+the dashboard embeds whichever it finds and renders fine without them.
+Coordinates come from the archive's own StationXML, so they cannot drift from
+the metadata the correlations were computed against.
+
+Keep the page under **16 MB** if you want to publish it. Three stations x three
+cross-components x four bands is about 9 MB. `--all-pairs` adds the
+autocorrelations and roughly doubles it.
 
 Read it as QC, not decoration. A gather row that breaks up is a day the
 measurement cannot use, and `nwindows` in the readout strip is the trail back to
