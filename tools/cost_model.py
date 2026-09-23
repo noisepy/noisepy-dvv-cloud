@@ -1,27 +1,30 @@
 """Cloud cost model: how small can the bill go for science-scale jobs?
 
-Three deployment scenarios for the obspy-free seisfetch+NoisePy chain:
+Three deployment scenarios for the NoisePy + codameter chain:
 
   S1  Lambda daily dv/v service (EventBridge cron, reference stack on S3)
   S2a Fargate Spot 25-year backfill, single-station dv/v (no response removal)
   S2b Fargate Spot moving-subarray cross-correlation (150 km radius tiles,
       30 km step, all pairs, multichannel CCF stacks sorted by distance)
 
-Every number is a parameter with provenance: measured on real data (seisfetch
-benchmarks, 2026-08-06), taken from an AWS price page (dated), or derived from
-the real station inventory (QuakeScope networks/*.zip). Regenerate the report:
+Every number is a parameter with provenance: measured on the deployed pipeline
+(2026-09-23, S2a), measured on component benchmarks (2026-08-06, S1 and S2b),
+taken from an AWS price page (dated), or derived from the real station
+inventory (QuakeScope networks/*.zip). Regenerate the report:
 
-    python tools/cost_model.py [--networks ~/GitHub/QuakeScope/networks]
+    pixi run -e tools python tools/cost_model.py \
+        [--networks ~/GitHub/QuakeScope/networks]
 
 writes docs/cost-model.md, docs/cost-model.html and docs/cost-model-figs/*.png
 deterministically (no timestamps in the body; the as-of dates are explicit
 parameters).
 
-Requires beyond the package deps: numpy, pandas + tabulate (to_markdown),
-scipy (KDTree geometry), matplotlib (figures) — tooling-only, deliberately
-NOT declared in pyproject.toml so the runtime containers stay lean:
-
-    pip install numpy pandas tabulate scipy matplotlib
+Beyond the package dependencies this needs tabulate (pandas `to_markdown`),
+scipy (KDTree geometry) and matplotlib (figures). They live in the `tools`
+pixi feature rather than in the `correlate` or `dvv` extras, so the processing
+containers stay lean and the two stages never have to solve against them --
+the same separation `ops` (awscli) and `map` (pygmt) use. Hence `-e tools`
+above; a bare `python tools/cost_model.py` will not find them.
 """
 
 from __future__ import annotations
@@ -606,7 +609,6 @@ def render_html(md_text: str) -> None:
     import re
 
     def inline_img(m):
-        path = REPO / "docs" / m.group(2).replace("cost-model-figs/", "cost-model-figs/")
         path = REPO / "docs" / m.group(2)
         if not path.exists():
             return ""
@@ -762,7 +764,8 @@ a design error, not a budget line.
 ## S1 — Lambda daily dv/v service
 
 One EventBridge rule -> one invocation per station per day: fetch the new
-day file, seisfetch chain with response removal, 6 cross-component
+day file, seisfetch chain with response removal (S1 is a design, not the
+shipped pipeline, which uses NoisePy without seisfetch), 6 cross-component
 pair-days, append CCF rows (Parquet on S3), incremental 60-config codameter
 update against the reference stack, write dv/v rows. ~{s1_sec:.0f} s per
 invocation at 1 vCPU-equivalent (1769 MB).

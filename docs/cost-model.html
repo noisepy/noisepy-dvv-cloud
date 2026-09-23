@@ -65,7 +65,8 @@ strong{color:#0e6e4c}
 <p>a design error, not a budget line.</p>
 <h2>S1 — Lambda daily dv/v service</h2>
 <p>One EventBridge rule -&gt; one invocation per station per day: fetch the new</p>
-<p>day file, seisfetch chain with response removal, 6 cross-component</p>
+<p>day file, seisfetch chain with response removal (S1 is a design, not the</p>
+<p>shipped pipeline, which uses NoisePy without seisfetch), 6 cross-component</p>
 <p>pair-days, append CCF rows (Parquet on S3), incremental 60-config codameter</p>
 <p>update against the reference stack, write dv/v rows. ~13 s per</p>
 <p>invocation at 1 vCPU-equivalent (1769 MB).</p>
