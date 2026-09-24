@@ -18,6 +18,9 @@ inputs:
     description: Registry token. Only needed when push is 'true'.
     required: false
     default: ''
+  smoke_import:
+    description: Python run inside the built image to prove the stack loads.
+    required: true
 
 runs:
   using: composite
@@ -28,6 +31,35 @@ runs:
       with:
         platforms: arm64
     - uses: docker/setup-buildx-action@v3
+
+    # BUILD AND RUN BEFORE PUBLISHING. The order is the point. A build cannot
+    # catch a dynamic linking failure: the first pixi images built clean on both
+    # arches and then died at Batch task start because the environment's
+    # libicui18n wanted CXXABI_1.3.15 and the runtime base ships GCC 12's
+    # libstdc++. So the real entrypoint is executed on both architectures --
+    # arm64 under QEMU -- and this step sits BEFORE the publish step, so a
+    # failure here means nothing reaches ghcr. An earlier version of this action
+    # ran the same check after the push, which proved nothing about the tags
+    # people pull.
+    #
+    # Single-platform builds because --load cannot take a multi-platform image.
+    # They populate the layer cache the publish step then reuses.
+    - name: Build and run the entrypoint on both architectures
+      shell: bash
+      run: |
+        set -euo pipefail
+        for plat in amd64 arm64; do
+          tag="smoke-${{ inputs.stage }}-$plat"
+          docker buildx build --platform "linux/$plat" --load \
+            --cache-from "type=gha,scope=${{ inputs.stage }}" \
+            --cache-to "type=gha,mode=max,scope=${{ inputs.stage }}" \
+            -f "docker/Dockerfile.${{ inputs.stage }}" -t "$tag" .
+          echo "--- $plat: dvv-cloud --help through the real ENTRYPOINT ---"
+          docker run --rm --platform "linux/$plat" "$tag" --help > /dev/null
+          echo "--- $plat: the stage's own imports ---"
+          docker run --rm --platform "linux/$plat" --entrypoint /bin/bash "$tag" \
+            /shell-hook.sh python -c "${{ inputs.smoke_import }}"
+        done
 
     - if: inputs.push == 'true'
       uses: docker/login-action@v3
@@ -44,7 +76,8 @@ runs:
           type=sha,prefix=${{ inputs.stage }}-,format=short
           type=raw,value=${{ inputs.stage }}-latest,enable={{is_default_branch}}
 
-    - uses: docker/build-push-action@v6
+    - name: Publish the multi-arch manifest
+      uses: docker/build-push-action@v6
       with:
         context: .
         file: docker/Dockerfile.${{ inputs.stage }}
@@ -52,5 +85,5 @@ runs:
         push: ${{ inputs.push }}
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
+        # cache-to lives on the smoke builds above, which run first
         cache-from: type=gha,scope=${{ inputs.stage }}
-        cache-to: type=gha,mode=max,scope=${{ inputs.stage }}

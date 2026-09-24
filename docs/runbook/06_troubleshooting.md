@@ -49,3 +49,29 @@ identical submit command — completed shards overwrite themselves idempotently.
 ## Emergency stop
 
 See [04_submitting_jobs.md](04_submitting_jobs.md#emergency-stop).
+
+## Task dies at start with an ImportError out of `sqlite3`
+
+```
+ImportError: /lib/x86_64-linux-gnu/libstdc++.so.6: version `CXXABI_1.3.15'
+not found (required by .../lib/libicui18n.so.78)
+```
+
+Found 2026-09-24 on the first Batch run of the pixi-built images, on **both**
+architectures — so if you see this, it is not an arm64 problem.
+
+conda-forge now builds against a GCC 16 toolchain, so the environment's own
+`libicui18n` needs `CXXABI_1.3.15`, while `debian:bookworm-slim` ships GCC 12's
+libstdc++ (`CXXABI_1.3.13`). The loader preferred the base image's copy over the
+`libstdcxx 16.2.0` that is already inside the environment.
+
+Fixed in the Dockerfiles by exporting `LD_LIBRARY_PATH` to the environment's
+`lib` inside the activation hook — base-image independent, and scoped so
+`/bin/bash` itself still starts against the system libraries.
+
+**The reason it reached Batch at all** is worth more than the fix: CI verified
+the image *built*, never that it *ran*. `docker build` cannot catch a dynamic
+linking failure. The `build-stage-image` action now executes the real
+entrypoint on both architectures and imports each stage's stack, and that step
+sits **before** the publish step -- the first version of it ran after the push,
+which proved nothing about the tags people actually pull.
