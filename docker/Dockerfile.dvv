@@ -21,8 +21,19 @@ WORKDIR /code
 COPY pyproject.toml pixi.lock README.md ./
 COPY src ./src
 
+# The environment's OWN libstdc++ has to win. conda-forge now builds against a
+# GCC 16 toolchain, so lib/libicui18n.so.78 wants CXXABI_1.3.15, while
+# debian:bookworm-slim ships GCC 12's libstdc++ (1.3.13). The loader preferred
+# the system one and every Batch task died at start with an ImportError out of
+# sqlite3 -- on BOTH arches, so this was never an arm64 problem. libstdcxx 16.2.0
+# is already in the environment, so pointing the loader at it fixes this without
+# depending on what the base image happens to ship.
+#
+# Exported inside the hook rather than as an ENV, so /bin/bash itself still
+# starts against the system libraries and only the python process sees it.
 RUN pixi install --locked -e dvv-image \
  && pixi shell-hook -e dvv-image -s bash > /shell-hook.sh \
+ && echo 'export LD_LIBRARY_PATH="/code/.pixi/envs/dvv-image/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"' >> /shell-hook.sh \
  && echo 'exec "$@"' >> /shell-hook.sh \
  && rm -rf /root/.cache/rattler
 

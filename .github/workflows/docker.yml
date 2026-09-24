@@ -31,13 +31,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stage: [correlate, dvv]
+        include:
+          - stage: correlate
+            smoke_import: "import noisepy.seis, obspy, noisepy_dvv_cloud.correlate"
+          - stage: dvv
+            smoke_import: "import codameter, noisepy_dvv_cloud.dvv"
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/build-stage-image
         with:
           stage: ${{ matrix.stage }}
           push: 'false'
+          smoke_import: ${{ matrix.smoke_import }}
 
   publish:
     if: github.event_name != 'pull_request'
@@ -48,7 +53,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stage: [correlate, dvv]
+        include:
+          - stage: correlate
+            smoke_import: "import noisepy.seis, obspy, noisepy_dvv_cloud.correlate"
+          - stage: dvv
+            smoke_import: "import codameter, noisepy_dvv_cloud.dvv"
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/build-stage-image
@@ -56,3 +65,4 @@ jobs:
           stage: ${{ matrix.stage }}
           push: 'true'
           token: ${{ secrets.GITHUB_TOKEN }}
+          smoke_import: ${{ matrix.smoke_import }}
