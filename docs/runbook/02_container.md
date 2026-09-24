@@ -38,9 +38,13 @@ Next: [03_batch_setup.md](03_batch_setup.md)
 ## Measured on the first local build (2026-08-08)
 
 - correlate image: **1.1 GB** (linux/amd64).
-- Images are **x86-only**: obspy ships no linux/aarch64 wheels, so an arm64
-  build tries to compile obspy/numcodecs/psutil from source and fails on
-  python:3.10-slim (no gcc). Keep Batch on X86_64 (as the job definitions
-  already do); Graviton becomes available only after the seisfetch
-  migration removes obspy from the correlate image.
+- Images are **x86-only**, but the reason is narrower than it first looked.
+  obspy ships no linux/aarch64 **wheels on PyPI** — still true through 1.5.1,
+  re-checked 2026-09-24 — so an arm64 build on `python:3.10-slim` tries to
+  compile obspy/numcodecs/psutil from source and fails (no gcc).
+  **conda-forge does ship obspy for linux-aarch64** (1.4.2 through 1.5.1), so
+  Graviton is blocked by this image being pip-based, not by obspy itself, and
+  not by the seisfetch migration. Building the image from the pixi lock would
+  unblock arm64 without removing obspy. Keep Batch on X86_64 until that is
+  actually tried and measured.
 - Building on an Apple Silicon laptop requires `--platform linux/amd64`.

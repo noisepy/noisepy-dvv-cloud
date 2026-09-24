@@ -11,8 +11,6 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 
-from datetimerange import DateTimeRange
-
 from . import constants, parquet_io
 
 logger = logging.getLogger(__name__)
@@ -75,7 +73,10 @@ def config_hash(cfg) -> str:
     return hashlib.sha1(blob).hexdigest()[:12]
 
 
-def make_raw_store(cfg, stations: list[str], date_range: DateTimeRange):
+def make_raw_store(cfg, stations: list[str], date_range):
+    # date_range: datetimerange.DateTimeRange. Not imported at module scope --
+    # it ships only in the `correlate` extra, and importing it here would make
+    # this module unimportable in the `dvv` environment the tests run in.
     """Route each shard to its archive. A shard must be single-archive
     (submit_helper groups stations by archive before sharding)."""
     from noisepy.seis.io.channel_filter_store import LocationChannelFilterStore, channel_filter
@@ -102,7 +103,52 @@ def make_raw_store(cfg, stations: list[str], date_range: DateTimeRange):
         date_range,
         storage_options=cfg.storage_options,
     )
-    return LocationChannelFilterStore(store)
+    return PreferredBandStore(LocationChannelFilterStore(store))
+
+
+class PreferredBandStore:
+    """Drop HH where the same station already offers BH, before anything reads it.
+
+    NoisePy keeps one band per orientation, but it does so AFTER `cc_timespan`
+    has read every channel `get_channels` returned. Measured on CI.LJR
+    2023-01-01: six channel-days fetched and mseed-decoded to preprocess three,
+    and because HH at 100 sps is ~2.75x the bytes of BH at 40 sps, **73% of the
+    bytes downloaded were discarded**. Filtering here instead took the
+    station-day from 6.6 s to 3.6 s with bit-identical output -- max |diff| 0.0
+    on all six pairs, since BH is what NoisePy kept either way.
+
+    Per station rather than `cfg.channels = ["BH?"]`, because a station with no
+    BH must still be correlated from HH: on the full inventory that is 9,837 of
+    22,191 stations. A shard can mix the two cases.
+    """
+
+    def __init__(self, store, priority: tuple[str, ...] = constants.BAND_PRIORITY):
+        self.store = store
+        self.priority = priority
+
+    def _rank(self, chan) -> int:
+        band = chan.type.name[:2].upper()
+        return self.priority.index(band) if band in self.priority else len(self.priority)
+
+    def get_channels(self, timespan):
+        best: dict[tuple, tuple[int, object]] = {}
+        for ch in self.store.get_channels(timespan):
+            key = (ch.station.network, ch.station.name, ch.type.get_orientation())
+            rank = self._rank(ch)
+            if key not in best or rank < best[key][0]:
+                best[key] = (rank, ch)
+        # sorted so a shard's channel order does not depend on dict insertion
+        return sorted((ch for _, ch in best.values()), key=str)
+
+    # everything else is the wrapped store's job
+    def get_timespans(self, *a, **k):
+        return self.store.get_timespans(*a, **k)
+
+    def read_data(self, timespan, chan):
+        return self.store.read_data(timespan, chan)
+
+    def get_inventory(self, timespan, station):
+        return self.store.get_inventory(timespan, station)
 
 
 def run(stations: list[str], start: datetime, end: datetime, output: str, scratch: str) -> None:
@@ -114,6 +160,7 @@ def run(stations: list[str], start: datetime, end: datetime, output: str, scratc
     had in memory (plus a process-pool spawn per worker). We export daily
     CCFs straight from the CC store instead (2026 efficiency audit).
     """
+    from datetimerange import DateTimeRange
     from noisepy.seis import cross_correlate
     from noisepy.seis.io.numpystore import NumpyCCStore
 

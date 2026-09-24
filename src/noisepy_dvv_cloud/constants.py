@@ -30,6 +30,13 @@ S3_ARCHIVES = {
 CROSS_COMPONENTS = ("EN", "EZ", "NZ")
 AUTO_COMPONENTS = ("EE", "NN", "ZZ")
 
+# Band preference, highest first. NoisePy's own dedup keeps one band per
+# orientation but only AFTER every channel has been fetched and decoded, so
+# without this the HH day-files are downloaded and thrown away. BH is native
+# 40 Hz; HH is 100 Hz and must be resampled, costing ~2.75x the bytes and ~4x
+# the preprocessing. A station with no BH keeps its HH.
+BAND_PRIORITY = ("BH", "HH")
+
 # Clements-Denolle octave bands (Hz); band directory names are "fmin-fmax".
 FREQ_BANDS = ((1.0, 2.0), (2.0, 4.0), (4.0, 8.0), (8.0, 16.0))
 

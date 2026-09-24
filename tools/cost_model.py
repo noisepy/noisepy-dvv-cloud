@@ -621,7 +621,7 @@ def render_html(md_text: str) -> None:
     out = [
         """<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cloud cost model - seisfetch + NoisePy</title>
+<title>Cloud cost model - NoisePy + codameter</title>
 <style>
 body{font:15px/1.55 -apple-system,system-ui,sans-serif;max-width:60rem;
 margin:2rem auto;padding:0 1rem;color:#1c2326;background:#fbfbfa}
