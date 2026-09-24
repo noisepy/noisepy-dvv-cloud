@@ -73,5 +73,5 @@ Fixed in the Dockerfiles by exporting `LD_LIBRARY_PATH` to the environment's
 the image *built*, never that it *ran*. `docker build` cannot catch a dynamic
 linking failure. The `build-stage-image` action now executes the real
 entrypoint on both architectures and imports each stage's stack, and that step
-sits **before** the publish step -- the first version of it ran after the push,
+sits **before** the publish step — the first version of it ran after the push,
 which proved nothing about the tags people actually pull.

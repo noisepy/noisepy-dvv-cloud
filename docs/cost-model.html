@@ -1,6 +1,6 @@
 <!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cloud cost model - seisfetch + NoisePy</title>
+<title>Cloud cost model - NoisePy + codameter</title>
 <style>
 body{font:15px/1.55 -apple-system,system-ui,sans-serif;max-width:60rem;
 margin:2rem auto;padding:0 1rem;color:#1c2326;background:#fbfbfa}
@@ -167,9 +167,14 @@ strong{color:#0e6e4c}
 <p>   fraction (0.18) already</p>
 <p>   discounts stations that were not deployed.</p>
 <div>3. <strong>Spot discount</strong> — floats around 70%; on-demand is ~3.3x.</div>
-<div>4. <strong>Compute timing uncertainty</strong> — anchors are single-core M1; assume</div>
-<p>   +/-2x when porting to Fargate silicon until the smoke test writes the</p>
-<p>   observed $/station-day into runbook/01_aws_setup.md (Gate 2).</p>
+<div>4. <strong>Compute timing uncertainty</strong> — no longer a guess for S2a. The</div>
+<p>   &quot;assume ±2x when porting to Fargate silicon&quot; caveat this item used to carry</p>
+<p>   was retired on 2026-09-23: the deployed anchors above are measured on</p>
+<p>   Fargate itself, and 01_aws_setup.md records the observed</p>
+<p>   $9.0e-05/station-day. It still applies to S1 and S2b, whose anchors remain</p>
+<p>   single-core M1. Architecture is measured too — ARM64 ran within noise of</p>
+<p>   x86 (ratio 1.039 ± 0.046, n=8 matched shards, 02_container.md), so Graviton</p>
+<p>   is a ~17% price saving rather than a throughput one.</p>
 <div>5. <strong>Standing services</strong> — none in any scenario by design. A DocumentDB-class</div>
 <p>   database would exceed the entire S2a compute bill within months.</p>
 <h2>Cheapest credible configurations</h2>

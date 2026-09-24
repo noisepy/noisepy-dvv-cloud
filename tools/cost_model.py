@@ -853,9 +853,14 @@ should permit.)
    fraction ({s2a.loc['all three archives', 'mean active fraction']}) already
    discounts stations that were not deployed.
 3. **Spot discount** — floats around 70%; on-demand is ~3.3x.
-4. **Compute timing uncertainty** — anchors are single-core M1; assume
-   +/-2x when porting to Fargate silicon until the smoke test writes the
-   observed $/station-day into runbook/01_aws_setup.md (Gate 2).
+4. **Compute timing uncertainty** — no longer a guess for S2a. The
+   "assume ±2x when porting to Fargate silicon" caveat this item used to carry
+   was retired on {t.deployed_asof}: the deployed anchors above are measured on
+   Fargate itself, and 01_aws_setup.md records the observed
+   $9.0e-05/station-day. It still applies to S1 and S2b, whose anchors remain
+   single-core M1. Architecture is measured too — ARM64 ran within noise of
+   x86 (ratio 1.039 ± 0.046, n=8 matched shards, 02_container.md), so Graviton
+   is a ~17% price saving rather than a throughput one.
 5. **Standing services** — none in any scenario by design. A DocumentDB-class
    database would exceed the entire S2a compute bill within months.
 
