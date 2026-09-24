@@ -95,6 +95,13 @@ obspy = ">=1.4"
 # noisepy-seis==0.9.93 pins scipy==1.12.0 exactly. Pulling obspy from conda
 # otherwise drags in a newer scipy and the PyPI solve then contradicts it.
 scipy = "==1.12.0"
+# The other three PyPI packages in this environment that ship an sdist and no
+# aarch64 wheel: without these the arm64 image build reaches for gcc, which a
+# slim runtime image does not have (CI caught exactly this on psutil). Versions
+# match what the PyPI solve chose, so nothing else in the lock moves.
+psutil = "==5.9.8"
+numcodecs = "==0.13.1"
+asciitree = "==0.3.3"
 # aiobotocore==2.5.2 -> botocore 1.29.x, which caps urllib3 below 1.27.
 urllib3 = "<1.27"
 
