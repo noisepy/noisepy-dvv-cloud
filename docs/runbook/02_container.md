@@ -35,10 +35,13 @@ your own bucket.)
 
 Next: [03_batch_setup.md](03_batch_setup.md)
 
-## Measured on the first local build (2026-08-08)
+## Measured
 
-- correlate image: **1.1 GB** (linux/amd64).
-- **Images are now built from the pixi lock, for amd64 and arm64.** The note
+Dated per line — the first figures came from the local build of 2026-08-08,
+the rest from the move to pixi-built multi-arch images on 2026-09-24.
+
+- correlate image: **1.1 GB** (linux/amd64), *2026-08-08, pip build*.
+- *2026-09-24:* **images are now built from the pixi lock, for amd64 and arm64.** The note
   below is kept because it is the reason. Measured locally: `correlate-image`
   (the same features without `dev`) is 857 MB against 976 MB for the dev
   environment, so keeping pytest/ruff/pre-commit out of the container saves
