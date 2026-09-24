@@ -137,8 +137,11 @@ class PreferredBandStore:
             rank = self._rank(ch)
             if key not in best or rank < best[key][0]:
                 best[key] = (rank, ch)
-        # sorted so a shard's channel order does not depend on dict insertion
-        return sorted((ch for _, ch in best.values()), key=str)
+        # Sorted by the same (network, station, orientation) key we grouped on,
+        # so a shard's channel order cannot depend on dict insertion. NOT by
+        # str(ch): the channel object's repr is not part of the store contract
+        # and is free to change under us.
+        return [ch for _, (_, ch) in sorted(best.items())]
 
     # everything else is the wrapped store's job
     def get_timespans(self, *a, **k):

@@ -79,10 +79,28 @@ def test_known_band_beats_unknown_band():
     assert _names(PreferredBandStore(inner).get_channels("ts")) == ["BHZ"]
 
 
+def _order(chans):
+    """Actual returned order. `_names` sorts, which would make an ordering test
+    pass on any permutation -- it answers "same set?", not "same order?"."""
+    return [c.type.name for c in chans]
+
+
 def test_output_order_is_deterministic():
+    """Reversing the input must not reorder the output."""
     fwd = [_chan("CI", "LJR", c) for c in ("BHE", "BHN", "BHZ")]
-    assert (_names(PreferredBandStore(_Fake(fwd)).get_channels("ts"))
-            == _names(PreferredBandStore(_Fake(fwd[::-1])).get_channels("ts")))
+    a = _order(PreferredBandStore(_Fake(fwd)).get_channels("ts"))
+    b = _order(PreferredBandStore(_Fake(fwd[::-1])).get_channels("ts"))
+    assert a == b == ["BHE", "BHN", "BHZ"]
+
+
+def test_order_is_stable_across_stations_too():
+    """Ordering is by (network, station, orientation), so a shard holding
+    several stations is grouped and ordered the same way every run."""
+    chans = ([_chan("CI", "RXH", c) for c in ("BHZ", "BHE")]
+             + [_chan("CI", "ADO", c) for c in ("BHN", "BHZ")])
+    got = _order(PreferredBandStore(_Fake(chans)).get_channels("ts"))
+    assert got == _order(PreferredBandStore(_Fake(chans[::-1])).get_channels("ts"))
+    assert got == ["BHN", "BHZ", "BHE", "BHZ"]   # ADO (N,Z) then RXH (E,Z)
 
 
 def test_reads_are_delegated_untouched():
