@@ -1,13 +1,41 @@
-# dv/v-stage image (codameter). Build context: repo root.
+# dvv-stage image, built from the pixi lock. Build context: repo root.
 #   docker build -f docker/Dockerfile.dvv -t dvv-cloud:dvv .
-FROM python:3.10-slim
+#   docker buildx build --platform linux/amd64,linux/arm64 ...   (both arches)
+#
+# WHY PIXI AND NOT PIP. Both stage images are built the same way so they stay
+# reproducible from one lock, and so a Graviton move does not need two
+# different build stories. obspy is NOT part of this image's dependency story --
+# it lives only in the `correlate` feature; the arm64 blocker that pip could
+# not solve was on that side. What this image gets from the lock is the same
+# guarantee: exact, solved versions rather than whatever PyPI serves on build
+# day, and an arm64 build that needs no compiler.
+#
+# The lock is the contract: `--locked` fails rather than re-solving, so the
+# image runs the versions the laptop and CI resolved, not whatever PyPI serves
+# on build day. That is also what makes the two stages reproducible separately
+# (noisepy-seis pins pandas<2, codameter needs pandas>=2 -- they cannot share an
+# environment, which is why there are two images at all).
+FROM ghcr.io/prefix-dev/pixi:0.76.2-bookworm-slim AS build
 
 WORKDIR /code
-
-RUN pip install --no-cache-dir "codameter[aws]>=0.3.0" pyarrow s3fs
-
-COPY pyproject.toml README.md ./
+COPY pyproject.toml pixi.lock README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir ".[dvv]"
 
-ENTRYPOINT ["python", "-m", "noisepy_dvv_cloud"]
+RUN pixi install --locked -e dvv-image \
+ && pixi shell-hook -e dvv-image -s bash > /shell-hook.sh \
+ && echo 'exec "$@"' >> /shell-hook.sh \
+ && rm -rf /root/.cache/rattler
+
+# The runtime stage carries the solved environment and nothing that built it:
+# no pixi binary, no package cache, no solver.
+FROM debian:bookworm-slim AS runtime
+
+WORKDIR /code
+COPY --from=build /code/.pixi/envs/dvv-image /code/.pixi/envs/dvv-image
+COPY --from=build /shell-hook.sh /shell-hook.sh
+# the editable install resolves against /code/src, so the path must match the
+# build stage's WORKDIR
+COPY --from=build /code/src /code/src
+COPY --from=build /code/pyproject.toml /code/README.md /code/
+
+ENTRYPOINT ["/bin/bash", "/shell-hook.sh", "python", "-m", "noisepy_dvv_cloud"]
