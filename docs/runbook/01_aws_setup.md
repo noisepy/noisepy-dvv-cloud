@@ -17,11 +17,21 @@ cross-region transfer risk. Nothing in this repo hardcodes the region except
    The original instruction, which fails: **Console → Billing → Budgets → Create budget**,
    monthly cost budget with an alert at your comfort level.
 
-   **Measured rate, 2026-09-23:** `$9.0e-05` per station-day of correlation on
-   Fargate Spot at 2 vCPU / 16 GB — 75 jobs covering 3 stations x 2 years, from
-   Batch `startedAt`/`stoppedAt` with the 1-minute minimum applied, priced at
-   the Fargate Spot list rate. That is **$0.20 for the whole 3-station, 2-year
-   campaign**. Derivation and what it is sensitive to:
+   **Measured rate.** Fargate Spot, 2 vCPU / 16 GB, from Batch
+   `startedAt`/`stoppedAt` with the 1-minute minimum applied, at the Fargate
+   Spot list rate:
+
+   | | $/station-day | shard |
+   |---|---|---|
+   | 2026-09-23, campaign as run | 9.0e-05 | 30 d, before the HH band fix |
+   | **2026-09-24, current** | **6.9e-05** | 30 d |
+   | 2026-09-24, current | 5.8e-05 | 90 d |
+
+   The 3-station, 2-year campaign actually billed **$0.20**. The improvement is
+   the HH band fix (marginal 6.36 → 4.09 s/station-day) partly offset by the
+   pixi image's larger fixed cost (21.6 → 40.4 s per job), which is also why
+   longer shards are now worth more: at 30 days the fixed cost is 25% of a job,
+   at 90 days 10%. Derivation and sensitivities:
    [docs/cost-model.md](../cost-model.md).
 
    Two earlier figures in this file were wrong by orders of magnitude in

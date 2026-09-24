@@ -5,7 +5,7 @@ scenarios, every number traceable to a measured anchor, a dated AWS list
 price, or the real station inventory. Regenerate with
 `python tools/cost_model.py`.
 
-**Calibrated against the deployed pipeline, 2026-09-23.** S2a is now
+**Calibrated against the deployed pipeline, 2026-09-24.** S2a is now
 costed from a direct measurement of the shipped correlate and dv/v stages
 rather than from component benchmarks. The component anchors below are kept
 because S1 and S2b describe workloads that have never been run, and because
@@ -21,21 +21,22 @@ Two things the first version of this model got wrong, both now fixed:
 
 Together those made it ~3x optimistic per station-day. The component timing
 anchor itself was sound: 6.79 cpu-s
-per station-day predicted at 20 sps against 6.36 s measured.
+per station-day predicted at 20 sps against 4.09 s measured.
 
 ## Anchors
 
-### Measured on the deployed pipeline (2026-09-23)
+### Measured on the deployed pipeline (2026-09-24)
 
 | parameter | value | provenance |
 |---|---|---|
-| correlate, per station-day | 6.36 s wall @ 2 vCPU | 75 Fargate Spot jobs, 3 stations x 2 yr SCEDC BH?, 40 sps, no response removal, 6 acorr pairs; least-squares over 10- and 30-day shards |
-| correlate, fixed per job | 21.6 s | same fit (image start + StationXML catalogue) |
+| correlate, per station-day | 4.09 s wall @ 2 vCPU | refit 2026-09-24 on 20 post-fix shards at two lengths; +/- 0.41 SE |
+| correlate, fixed per job | 40.4 s | same fit (image pull + env activation + StationXML catalogue); +/- 9.8 SE |
+| effect of the HH band fix | marginal 6.36 -> 4.09 s (-36%) | matched 30-day shards ran at 0.889 +/- 0.052 of their pre-fix time (n=12, 95% 0.787-0.990) -- less than 36% because the fixed cost rose at the same time |
 | correlate task shape | 2 vCPU / 16 GB | `dvvcloud2026_correlate:1` |
 | dv/v, per station-day | 0.039 s | `dvvcloud2026_dvv:1`, 660 station-days in 51.4 s vs 10 in 26.0 s |
 | dv/v, fixed per job | 25.6 s | same two points |
 | dv/v task shape | 2 vCPU / 8 GB | `dvvcloud2026_dvv:1` |
-| vCPU speedup achieved | 0.99x | 6.36 s wall vs 6.79 cpu-s predicted |
+| vCPU speedup achieved | 0.99x | 4.09 s wall vs 6.79 cpu-s predicted |
 | **end-to-end check** | **$0.197 for 3 stations x 2 years** | what the campaign actually billed; this model replays it to $0.197 |
 
 ### Component anchors (M1 benchmarks, 2026-08-06) — S1 and S2b only
@@ -111,8 +112,8 @@ calibration gap stays visible rather than being quietly absorbed.
 
 |                            |   stations |   (of which HH-only) |   mean active fraction |   station-days (M) |   correlate task-h |   dv/v task-h |   $ measured-anchor |   $ component model |   $/station |   $/station-day | wall @ maxvCpus=256   | wall @ maxvCpus=2048   |
 |:---------------------------|-----------:|---------------------:|-----------------------:|-------------------:|-------------------:|--------------:|--------------------:|--------------------:|------------:|----------------:|:----------------------|:-----------------------|
-| CA-broadband (SCEDC+NCEDC) |        671 |                   92 |                   0.52 |                3.2 |               6630 |            38 |                 303 |                 414 |        0.45 |        9.63e-05 | 2.2 d                 | 0.3 d                  |
-| all three archives         |      22191 |                 9837 |                   0.18 |               36.1 |             104501 |           548 |                4786 |                6184 |        0.22 |        0.000133 | 34.2 d                | 4.3 d                  |
+| CA-broadband (SCEDC+NCEDC) |        671 |                   92 |                   0.52 |                3.2 |               4258 |            38 |                 195 |                 414 |        0.29 |        6.2e-05  | 1.4 d                 | 0.2 d                  |
+| all three archives         |      22191 |                 9837 |                   0.18 |               36.1 |              67024 |           548 |                3077 |                6184 |        0.14 |        8.53e-05 | 22.0 d                | 2.7 d                  |
 
 **Read**: the full California broadband archive for 25 years of
 single-station dv/v is a few hundred dollars; the entire
@@ -183,7 +184,7 @@ should permit.)
 3. **Spot discount** — floats around 70%; on-demand is ~3.3x.
 4. **Compute timing uncertainty** — no longer a guess for S2a. The
    "assume ±2x when porting to Fargate silicon" caveat this item used to carry
-   was retired on 2026-09-23: the deployed anchors above are measured on
+   was retired on 2026-09-24: the deployed anchors above are measured on
    Fargate itself, and 01_aws_setup.md records the observed
    $9.0e-05/station-day. It still applies to S1 and S2b, whose anchors remain
    single-core M1. Architecture is measured too — ARM64 ran within noise of
@@ -197,7 +198,7 @@ should permit.)
 - **S1**: nightly Fargate Spot sweep + S3 Parquet, Lambda only if per-station
   isolation/latency matters. Order $10-100/month for 100-3000 stations.
 - **S2a**: 2 vCPU Spot shards, 4 stations each, no
-  response removal — ~$0.45/station
+  response removal — ~$0.29/station
   for 25 years, measured-anchor costing.
 - **S2b**: midpoint-assigned tiles at 5 sps, monthly substacks + final stacks
   only (never keep daily pair CCFs) — the full western-US crustal survey for

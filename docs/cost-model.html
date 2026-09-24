@@ -17,7 +17,7 @@ strong{color:#0e6e4c}
 <p>scenarios, every number traceable to a measured anchor, a dated AWS list</p>
 <p>price, or the real station inventory. Regenerate with</p>
 <p><code>python tools/cost_model.py</code>.</p>
-<p><strong>Calibrated against the deployed pipeline, 2026-09-23.</strong> S2a is now</p>
+<p><strong>Calibrated against the deployed pipeline, 2026-09-24.</strong> S2a is now</p>
 <p>costed from a direct measurement of the shipped correlate and dv/v stages</p>
 <p>rather than from component benchmarks. The component anchors below are kept</p>
 <p>because S1 and S2b describe workloads that have never been run, and because</p>
@@ -30,18 +30,19 @@ strong{color:#0e6e4c}
 <p>  Memory is roughly half the correlate bill at that shape.</p>
 <p>Together those made it ~3x optimistic per station-day. The component timing</p>
 <p>anchor itself was sound: 6.79 cpu-s</p>
-<p>per station-day predicted at 20 sps against 6.36 s measured.</p>
+<p>per station-day predicted at 20 sps against 4.09 s measured.</p>
 <h2>Anchors</h2>
-<p>### Measured on the deployed pipeline (2026-09-23)</p>
+<p>### Measured on the deployed pipeline (2026-09-24)</p>
 <table>
 <tr><th>parameter</th><th>value</th><th>provenance</th></tr>
-<tr><td>correlate, per station-day</td><td>6.36 s wall @ 2 vCPU</td><td>75 Fargate Spot jobs, 3 stations x 2 yr SCEDC BH?, 40 sps, no response removal, 6 acorr pairs; least-squares over 10- and 30-day shards</td></tr>
-<tr><td>correlate, fixed per job</td><td>21.6 s</td><td>same fit (image start + StationXML catalogue)</td></tr>
+<tr><td>correlate, per station-day</td><td>4.09 s wall @ 2 vCPU</td><td>refit 2026-09-24 on 20 post-fix shards at two lengths; +/- 0.41 SE</td></tr>
+<tr><td>correlate, fixed per job</td><td>40.4 s</td><td>same fit (image pull + env activation + StationXML catalogue); +/- 9.8 SE</td></tr>
+<tr><td>effect of the HH band fix</td><td>marginal 6.36 -&gt; 4.09 s (-36%)</td><td>matched 30-day shards ran at 0.889 +/- 0.052 of their pre-fix time (n=12, 95% 0.787-0.990) -- less than 36% because the fixed cost rose at the same time</td></tr>
 <tr><td>correlate task shape</td><td>2 vCPU / 16 GB</td><td>dvvcloud2026_correlate:1</td></tr>
 <tr><td>dv/v, per station-day</td><td>0.039 s</td><td>dvvcloud2026_dvv:1, 660 station-days in 51.4 s vs 10 in 26.0 s</td></tr>
 <tr><td>dv/v, fixed per job</td><td>25.6 s</td><td>same two points</td></tr>
 <tr><td>dv/v task shape</td><td>2 vCPU / 8 GB</td><td>dvvcloud2026_dvv:1</td></tr>
-<tr><td>vCPU speedup achieved</td><td>0.99x</td><td>6.36 s wall vs 6.79 cpu-s predicted</td></tr>
+<tr><td>vCPU speedup achieved</td><td>0.99x</td><td>4.09 s wall vs 6.79 cpu-s predicted</td></tr>
 <tr><td>**end-to-end check**</td><td>**$0.197 for 3 stations x 2 years**</td><td>what the campaign actually billed; this model replays it to $0.197</td></tr>
 </table>
 <p>### Component anchors (M1 benchmarks, 2026-08-06) — S1 and S2b only</p>
@@ -106,8 +107,8 @@ strong{color:#0e6e4c}
 <p>calibration gap stays visible rather than being quietly absorbed.</p>
 <table>
 <tr><th></th><th>stations</th><th>(of which HH-only)</th><th>mean active fraction</th><th>station-days (M)</th><th>correlate task-h</th><th>dv/v task-h</th><th>$ measured-anchor</th><th>$ component model</th><th>$/station</th><th>$/station-day</th><th>wall @ maxvCpus=256</th><th>wall @ maxvCpus=2048</th></tr>
-<tr><td>CA-broadband (SCEDC+NCEDC)</td><td>671</td><td>92</td><td>0.52</td><td>3.2</td><td>6630</td><td>38</td><td>303</td><td>414</td><td>0.45</td><td>9.63e-05</td><td>2.2 d</td><td>0.3 d</td></tr>
-<tr><td>all three archives</td><td>22191</td><td>9837</td><td>0.18</td><td>36.1</td><td>104501</td><td>548</td><td>4786</td><td>6184</td><td>0.22</td><td>0.000133</td><td>34.2 d</td><td>4.3 d</td></tr>
+<tr><td>CA-broadband (SCEDC+NCEDC)</td><td>671</td><td>92</td><td>0.52</td><td>3.2</td><td>4258</td><td>38</td><td>195</td><td>414</td><td>0.29</td><td>6.2e-05</td><td>1.4 d</td><td>0.2 d</td></tr>
+<tr><td>all three archives</td><td>22191</td><td>9837</td><td>0.18</td><td>36.1</td><td>67024</td><td>548</td><td>3077</td><td>6184</td><td>0.14</td><td>8.53e-05</td><td>22.0 d</td><td>2.7 d</td></tr>
 </table>
 <p><strong>Read</strong>: the full California broadband archive for 25 years of</p>
 <p>single-station dv/v is a few hundred dollars; the entire</p>
@@ -169,7 +170,7 @@ strong{color:#0e6e4c}
 <div>3. <strong>Spot discount</strong> — floats around 70%; on-demand is ~3.3x.</div>
 <div>4. <strong>Compute timing uncertainty</strong> — no longer a guess for S2a. The</div>
 <p>   &quot;assume ±2x when porting to Fargate silicon&quot; caveat this item used to carry</p>
-<p>   was retired on 2026-09-23: the deployed anchors above are measured on</p>
+<p>   was retired on 2026-09-24: the deployed anchors above are measured on</p>
 <p>   Fargate itself, and 01_aws_setup.md records the observed</p>
 <p>   $9.0e-05/station-day. It still applies to S1 and S2b, whose anchors remain</p>
 <p>   single-core M1. Architecture is measured too — ARM64 ran within noise of</p>
@@ -181,7 +182,7 @@ strong{color:#0e6e4c}
 <div>&bull; <strong>S1</strong>: nightly Fargate Spot sweep + S3 Parquet, Lambda only if per-station</div>
 <p>  isolation/latency matters. Order $10-100/month for 100-3000 stations.</p>
 <div>&bull; <strong>S2a</strong>: 2 vCPU Spot shards, 4 stations each, no</div>
-<p>  response removal — ~$0.45/station</p>
+<p>  response removal — ~$0.29/station</p>
 <p>  for 25 years, measured-anchor costing.</p>
 <div>&bull; <strong>S2b</strong>: midpoint-assigned tiles at 5 sps, monthly substacks + final stacks</div>
 <p>  only (never keep daily pair CCFs) — the full western-US crustal survey for</p>
