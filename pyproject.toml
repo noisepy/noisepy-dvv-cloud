@@ -66,15 +66,20 @@ select = ["E4", "E7", "E9", "F"]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-# osx-arm64 = the laptop; linux-64 = what the Batch images run on (obspy ships
-# no linux/aarch64 wheels, so linux-aarch64 stays off the list until the
-# seisfetch migration removes obspy from the correlate stage).
-# linux-aarch64 is here so the correlate/dvv images can be built for Graviton,
-# which is ~20% cheaper per vCPU on Fargate. It works because every PyPI
-# dependency of the correlate stage is a pure-Python wheel (noisepy-seis,
-# noisepy-seis-io, pyasdf, datetimerange) and the one compiled package that
-# has no aarch64 wheel on PyPI -- obspy -- is installed from conda-forge
-# instead, which does ship it. See the correlate feature's conda deps below.
+# osx-arm64 = the laptop; linux-64 and linux-aarch64 = what the Batch images
+# run on. aarch64 is here so the images can be built for Fargate Graviton.
+#
+# It works because every PyPI dependency of the correlate stage is a
+# pure-Python wheel (noisepy-seis, noisepy-seis-io, pyasdf, datetimerange).
+# Four packages publish no aarch64 wheel on PyPI -- obspy, psutil, numcodecs
+# and asciitree -- and all four come from conda-forge instead, which does ship
+# them; see the correlate feature's conda dependencies below. Without that the
+# arm64 image build reaches for a compiler it does not have.
+#
+# An earlier version of this comment said aarch64 stayed off the list until a
+# seisfetch migration removed obspy. That was wrong twice over: conda-forge has
+# always shipped obspy for aarch64, and the blocker was the images being
+# pip-based, not obspy itself.
 platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
 
 [tool.pixi.dependencies]
