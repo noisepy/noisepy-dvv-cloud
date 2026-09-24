@@ -69,7 +69,13 @@ channels = ["conda-forge"]
 # osx-arm64 = the laptop; linux-64 = what the Batch images run on (obspy ships
 # no linux/aarch64 wheels, so linux-aarch64 stays off the list until the
 # seisfetch migration removes obspy from the correlate stage).
-platforms = ["osx-arm64", "linux-64"]
+# linux-aarch64 is here so the correlate/dvv images can be built for Graviton,
+# which is ~20% cheaper per vCPU on Fargate. It works because every PyPI
+# dependency of the correlate stage is a pure-Python wheel (noisepy-seis,
+# noisepy-seis-io, pyasdf, datetimerange) and the one compiled package that
+# has no aarch64 wheel on PyPI -- obspy -- is installed from conda-forge
+# instead, which does ship it. See the correlate feature's conda deps below.
+platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
 
 [tool.pixi.dependencies]
 # Intersection of noisepy (<3.11) and codameter (>=3.10).
@@ -77,6 +83,20 @@ python = "3.10.*"
 
 [tool.pixi.pypi-dependencies]
 noisepy-dvv-cloud = { path = ".", editable = true }
+
+# obspy from conda-forge, not PyPI. It is an UNDECLARED dependency of
+# noisepy-seis -- neither noisepy package lists it; it arrives through pyasdf --
+# and PyPI has no linux/aarch64 wheel for it at any version through 1.5.1, so
+# pip would try to compile it from source and fail. conda-forge ships
+# linux-aarch64 builds (1.4.2-1.5.1), and satisfying it here means pip finds it
+# already present. This one line is what makes Graviton possible.
+[tool.pixi.feature.correlate.dependencies]
+obspy = ">=1.4"
+# noisepy-seis==0.9.93 pins scipy==1.12.0 exactly. Pulling obspy from conda
+# otherwise drags in a newer scipy and the PyPI solve then contradicts it.
+scipy = "==1.12.0"
+# aiobotocore==2.5.2 -> botocore 1.29.x, which caps urllib3 below 1.27.
+urllib3 = "<1.27"
 
 # awscli lives in its own environment on purpose. conda-forge's awscli pulls
 # ruamel-yaml 0.19, and noisepy-seis pins pydantic-yaml==1.0 which caps
@@ -89,6 +109,12 @@ awscli = "*"
 # own data stack (netCDF, GDAL), and it has no business in the solve for either
 # processing stage. The station map is written once to a PNG and the dashboard
 # embeds it, so `map` never has to satisfy codameter or noisepy.
+# pygmt has no conda-forge build for linux-aarch64, so this environment stays
+# on the platforms it can actually solve for. It is operator tooling and never
+# runs in a container.
+[tool.pixi.feature.map]
+platforms = ["osx-arm64", "linux-64"]
+
 [tool.pixi.feature.map.dependencies]
 pygmt = "*"
 
@@ -104,6 +130,11 @@ tabulate = "*"
 [tool.pixi.environments]
 correlate = ["correlate", "dev"]
 dvv = ["dvv", "dev"]
+# What the containers install: the same features WITHOUT `dev`. pytest, ruff
+# and pre-commit have no business in a runtime image, and the images are what
+# gets published and pulled by every Fargate task.
+correlate-image = ["correlate"]
+dvv-image = ["dvv"]
 ops = ["ops"]
 map = ["map"]
 tools = ["tools"]
