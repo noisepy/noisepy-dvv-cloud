@@ -15,7 +15,7 @@ env instructions in the other runbook pages where they disagree.
 | IAM roles for Batch | **Already exist** — reuse `NoisePyBatchRole` |
 | Bucket policy for collaborators | **Not needed** — the `scoped` group already grants it |
 | Batch compute env / queue / job defs | **Still to do** — nothing named `dvvcloud2026_*` exists |
-| seisfetch migration | **Deferred** — see the last section |
+| seisfetch migration | **Re-assessed 2026-09-24** — two of its three wins do not need it; see Phase 6 |
 
 ## Phase 0 — Environments (done; re-run to reproduce)
 
@@ -206,18 +206,79 @@ Divide by station-days processed; write the number into
 
 Only once both gates pass. See [04_submitting_jobs.md](04_submitting_jobs.md).
 
-## Phase 6 — seisfetch, deferred
+## Phase 6 — seisfetch, re-assessed 2026-09-24
 
-`seisfetch` 0.4.1 is published and its NoisePy adapter reports bit-identical
-preprocessing (max abs diff `0.0` through `compute_fft` and `correlate`), plus a
-pure-numpy response removal that would let us re-enable the response correction
-disabled in e8cf629 for cost.
+The 2026-08 deferral said seisfetch would buy three things: a smaller image,
+Graviton, and a pure-numpy response removal. Re-checked against what is
+published now and against the running pipeline, **two of the three turned out
+not to depend on seisfetch at all**, and the largest efficiency win was
+somewhere else entirely.
 
-It is still **off the gate path**, for a reason the adapter's own docstring states:
-NoisePy imports obspy at module level, so a seisfetch-fed correlate container still
-ships obspy — the image-size and Graviton wins land only after the upstream NoisePy PR
-demotes obspy to an extra. `SeisfetchS3RawStore` is also self-described "evaluation
-grade": no catalog support, placeholder `0.0` coordinates, and `get_timespans` /
-`get_channels` left as hooks for the harness to fill.
+### What moved
+
+`seisfetch` is now **0.5.0** and has genuinely graduated. Its core dependencies
+are `numpy + boto3 + pymseed` — obspy is an *extra*, not a requirement — and it
+now publishes a `noisepy` extra. That is a real change from the 0.4.1
+"evaluation grade" store the deferral was written against.
+
+### What did not move
+
+NoisePy still imports obspy **at module level** in the files we import —
+`noise_module.py`, `correlate.py`, `io/s3store.py`, `io/datatypes.py`,
+`io/stores.py`, `io/channelcatalog.py`, 20+ in total. Verified 2026-09-24:
+`import noisepy.seis` pulls obspy 1.5.0. So a seisfetch-fed container still
+ships obspy, exactly as the original deferral said.
+
+One detail worth knowing: **obspy is an undeclared dependency**. Neither
+`noisepy-seis` nor `noisepy-seis-io` lists it; it arrives only because
+`pyasdf` requires it, and pyasdf exists for the ASDF store this project never
+uses. The hot path's own obspy usage is shallow — `bandpass`, `_npts2nfft` and
+a taper lookup in `noise_module` — all scipy-backed. The deep usage is in the
+`io/` layer (`Stream`, `Trace`, `UTCDateTime`, `read_inventory`), which is
+precisely what a seisfetch raw store would replace.
+
+### Graviton is not blocked by obspy
+
+obspy ships no linux/aarch64 wheels **on PyPI** (checked through 1.5.1), which
+is what the container note recorded. But **conda-forge ships obspy for
+linux-aarch64** (1.4.2–1.5.1). The blocker is that `Dockerfile.correlate` is
+pip-on-`python:3.10-slim`; an image built from the pixi lock would get arm64
+today. That is a container change, not a migration — see
+[02_container.md](02_container.md).
+
+### The read path is network-bound, not obspy-bound
+
+Profiled one channel-day: of 5.46 s, **5.14 s is `_thread.lock.acquire` under
+`fsspec._fetch`** — waiting on S3. obspy's own mseed decode is 0.28 s. Swapping
+the mseed reader therefore cannot be the efficiency story; the bytes are.
+
+### The efficiency win that was actually there
+
+`get_channels` returned **six** channels for CI.LJR (BH? and HH?) and NoisePy
+read and decoded all six, then preprocessed three: its band dedup happens
+*after* `read_data`. HH at 100 sps is ~2.75x the bytes of BH at 40 sps, so
+**73% of the bytes downloaded were discarded**.
+
+`correlate.PreferredBandStore` now drops HH where the same station offers BH,
+before anything reads it. Measured on CI.LJR 2023-01-01 through the production
+path: **7.2 s -> 3.6 s**, six channels to three, and the output is
+**bit-identical** — max |diff| 0.0 on all six pairs, because BH is what NoisePy
+kept either way. Per station rather than `channels=["BH?"]`, because 9,837 of
+the 22,191 inventory stations are HH-only and would otherwise be silently
+dropped.
+
+### Where that leaves seisfetch
+
+Still worth doing, but it is now the **third** priority, not the first, and its
+case rests on the response removal rather than on speed or image size:
+
+1. **Done** — band preference. Free, bit-identical, no new dependency.
+2. **Next, if wanted** — pixi-built image for arm64. Needs a rebuild and a
+   Graviton smoke test; no upstream dependency.
+3. **Then** — seisfetch, for the pure-numpy response removal that would let us
+   re-enable the correction disabled in e8cf629 for cost. Removing obspy
+   entirely still needs the upstream NoisePy PR demoting it to an extra, and
+   `SeisfetchS3RawStore` still has to provide the catalog and coordinates that
+   `XMLStationChannelCatalog` provides today.
 
 Track the upstream PR. Do not block the campaign on it.
