@@ -81,7 +81,7 @@ same published image, into separate S3 prefixes, as
 
 The last row is the one that matters: stretching compares waveform shape, so a
 1-CC of 8.7e-13 is about 1e-9 of the dv/v measurement floor (~1e-3). The
-estimator cannot see it. Not bit-identical, and it never will be -- different
+estimator cannot see it. Not bit-identical, and it never will be — different
 FFT kernels on different architectures.
 
 **Throughput is the same, within noise.** This is the part worth reading
@@ -99,7 +99,7 @@ was noise:
 | ADO 2023.220 | 79.8 | 92.5 | 1.160 |
 | RXH 2023.260 | 81.6 | 74.6 | 0.913 |
 
-Mean ratio **1.039 +/- 0.046** (SE, n=8), 95% interval **0.950-1.129**. Parity
+Mean ratio **1.039 ± 0.046** (SE, n=8), 95% interval **0.950–1.129**. Parity
 sits inside the interval, so there is **no measurable throughput difference**;
 the point estimate is 4% slower on ARM. One shard would have supported the
 opposite conclusion, which is why there are eight.
@@ -122,8 +122,8 @@ AWS's 20% ARM discount, minus the 4% slower point estimate, gives the 17%.
 **Batch is still X86_64.** `dvvcloud2026_correlate_arm64:1` exists as a
 separate job definition name, so switching is a one-line change to
 `submit_helper` or a `--job-definition` override, and reverting is the same.
-Worth taking for a long campaign -- 17% of the 25-year California figure is
-about $50 -- and not worth any risk for a smoke test.
+Worth taking for a long campaign — 17% of the 25-year California figure is
+about $50 — and not worth any risk for a smoke test.
 
 - On an Apple Silicon laptop, `--platform linux/amd64` builds the x86 image
   under emulation; arm64 now builds natively.

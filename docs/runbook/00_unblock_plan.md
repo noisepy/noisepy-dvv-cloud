@@ -275,7 +275,7 @@ case rests on the response removal rather than on speed or image size:
 1. **Done** — band preference. Free, bit-identical, no new dependency.
 2. **Done** — pixi-built images for arm64, and Graviton measured on Batch.
    Products equivalent (worst 1-CC 8.7e-13), throughput the same within noise
-   (ratio 1.039 +/- 0.046, n=8 matched shards), cost 17% lower and almost all
+   (ratio 1.039 ± 0.046, n=8 matched shards), cost 17% lower and almost all
    of that is AWS's price list rather than performance. Numbers and the full
    table in [02_container.md](02_container.md). Batch is still X86_64;
    `dvvcloud2026_correlate_arm64:1` is registered and switching is a
