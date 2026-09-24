@@ -92,11 +92,21 @@ awscli = "*"
 [tool.pixi.feature.map.dependencies]
 pygmt = "*"
 
+# The cost model is tooling, run by hand when the pricing or the measured
+# anchors move. scipy is for the KDTree station geometry, matplotlib for the
+# figures, tabulate for pandas' markdown tables -- none of which belongs in a
+# processing container.
+[tool.pixi.feature.tools.dependencies]
+scipy = "*"
+matplotlib = "*"
+tabulate = "*"
+
 [tool.pixi.environments]
 correlate = ["correlate", "dev"]
 dvv = ["dvv", "dev"]
 ops = ["ops"]
 map = ["map"]
+tools = ["tools"]
 
 # Sanity checks -- run both after any dependency change. `verify-dvv` prints the
 # codameter version because the sign convention depends on it.
