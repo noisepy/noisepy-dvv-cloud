@@ -134,9 +134,24 @@ class Timings:
     #  contain whatever thread parallelism the code achieves. Nothing divides
     #  them by the vCPU count; see `vcpu_speedup`.
     # ---------------------------------------------------------------------- #
-    deployed_asof: str = "2026-09-23"
-    deployed_fixed_s: float = 21.6      # per correlate job: image start, catalogue
-    deployed_marginal_s: float = 6.36   # per station-day, wall, at 2 vCPU
+    deployed_asof: str = "2026-09-24"
+    # Refit 2026-09-24 on the pipeline as it stands now: 20 post-fix x86 shards
+    # at two lengths (8 x 10-day across CI.ADO/RXH/LJR, 12 x 30-day CI.LJR),
+    # residual 13% of mean runtime.
+    #
+    # Both numbers moved, in opposite directions, and the split is the story:
+    #
+    #   fixed     21.6 -> 40.4 s   the pixi/conda image is larger to pull and
+    #                              activate than the pip one it replaced
+    #   marginal  6.36 -> 4.09 s   PreferredBandStore stopped fetching the HH
+    #                              channels NoisePy was discarding (-36%)
+    #
+    # They partly cancel, which is why a matched 30-day shard only improved by
+    # a factor 0.889 +/- 0.052 (n=12, 95% 0.787-0.990) while the marginal fell
+    # 36%. It also makes SHARD LENGTH matter more than it did: at 30 days the
+    # fixed cost is 25% of the job, at 90 days 10%.
+    deployed_fixed_s: float = 40.4      # +/- 9.8 (SE)
+    deployed_marginal_s: float = 4.09   # +/- 0.41 (SE), per station-day, 2 vCPU
     deployed_vcpu: float = 2.0
     deployed_gb: float = 16.0
     deployed_sps: float = 40.0          # constants.SAMPLING_RATE
@@ -407,15 +422,19 @@ def scenario_fargate_25y(
     df: pd.DataFrame,
     years=25,
     stations_per_shard: int = 4,
-    days_per_shard: int = 30,
+    days_per_shard: int = 90,
 ):
     """S2a: whole-history single-station dv/v, costed from the deployed pipeline.
 
     Billed from the 2026-09-23 measurement rather than the component anchors:
     the shipped pipeline runs 40 sps NoisePy without seisfetch and pays a fixed
     per-job overhead, none of which the component model describes. Shard
-    geometry defaults to `submit_helper`'s own (4 stations x 30 days), which is
-    what the 16 GB in the job definition was sized for.
+    geometry defaults to 4 stations x 90 days. `submit_helper` still defaults to
+    30, which was right when the fixed cost was 21.6 s and is not now that it
+    is 40.4: at 30 days the fixed cost is 25% of the job, at 90 days 10%, worth
+    17% per station-day. Day count barely moves peak memory -- preprocessing is
+    per-day -- so the 16 GB shape still holds, and a 90-day shard runs about
+    seven minutes against a 24 h timeout.
 
     `$ component model` is the old costing kept beside it, so the calibration
     gap stays visible instead of being quietly absorbed.
@@ -731,8 +750,9 @@ per station-day predicted at 20 sps against {t.deployed_marginal_s} s measured.
 
 | parameter | value | provenance |
 |---|---|---|
-| correlate, per station-day | {t.deployed_marginal_s} s wall @ {int(t.deployed_vcpu)} vCPU | 75 Fargate Spot jobs, 3 stations x 2 yr SCEDC BH?, 40 sps, no response removal, 6 acorr pairs; least-squares over 10- and 30-day shards |
-| correlate, fixed per job | {t.deployed_fixed_s} s | same fit (image start + StationXML catalogue) |
+| correlate, per station-day | {t.deployed_marginal_s} s wall @ {int(t.deployed_vcpu)} vCPU | refit {t.deployed_asof} on 20 post-fix shards at two lengths; +/- 0.41 SE |
+| correlate, fixed per job | {t.deployed_fixed_s} s | same fit (image pull + env activation + StationXML catalogue); +/- 9.8 SE |
+| effect of the HH band fix | marginal 6.36 -> 4.09 s (-36%) | matched 30-day shards ran at 0.889 +/- 0.052 of their pre-fix time (n=12, 95% 0.787-0.990) -- less than 36% because the fixed cost rose at the same time |
 | correlate task shape | {int(t.deployed_vcpu)} vCPU / {int(t.deployed_gb)} GB | `dvvcloud2026_correlate:1` |
 | dv/v, per station-day | {t.dvv_marginal_s} s | `dvvcloud2026_dvv:1`, 660 station-days in 51.4 s vs 10 in 26.0 s |
 | dv/v, fixed per job | {t.dvv_fixed_s} s | same two points |
