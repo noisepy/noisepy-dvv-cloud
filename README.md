@@ -97,3 +97,15 @@ single CI station before scaling out.
   `codameter.deviations.run_pipeline`, which currently sits on a non-public module —
   pin the version this repo was tested against before upgrading.
 - Python 3.10 (intersection of noisepy `<3.11` and codameter `>=3.10`)
+
+## Acknowledgments
+
+noisepy-dvv-cloud was developed as part of the Seismic COmputational Platform for
+Empowering Discovery (SCOPED) project. This material is based upon work
+supported by the U.S. National Science Foundation under Award No. OAC-2103701
+(University of Washington), part of the collaborative SCOPED awards
+OAC-2104052, OAC-2103621, OAC-2103741 and OAC-2103494.
+
+Any opinions, findings, and conclusions or recommendations expressed in this
+material are those of the author(s) and do not necessarily reflect the views
+of the National Science Foundation.
